@@ -33,7 +33,7 @@
 
 [SharpAI Aegis](https://www.sharpai.org) is the desktop companion for DeepCamera. It uses LLM to automatically set up your environment, configure camera skills, and manage the full AI pipeline — no manual Docker or CLI required. It also adds an intelligent agent layer: persistent memory, agentic chat with your cameras, AI video generation, voice (TTS), and conversational messaging via Discord / Telegram / Slack.
 
-[**🌐 Learn more at www.sharpai.org**](https://www.sharpai.org) · [**📦 Download SharpAI Aegis**](https://github.com/SharpAI/DeepCamera/releases/tag/Aegis)
+[**📦 Download SharpAI Aegis**](https://www.sharpai.org)
 
 </div>
 
