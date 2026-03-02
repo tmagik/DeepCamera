@@ -62,6 +62,8 @@ DeepCamera is an **open-source AI skill platform** that transforms any camera in
 
 Each skill is a self-contained module with its own model, parameters, and communication protocol. Skills are installed, configured, and orchestrated through [SharpAI Aegis](https://www.sharpai.org) — the desktop companion that adds LLM-powered setup, agent chat, and smart alerts.
 
+Building on DeepCamera's proven open-source facial recognition, person re-identification (RE-ID), fall detection, and CCTV/NVR surveillance monitoring, the skill catalog extends these machine learning capabilities with modern AI — from VLM scene understanding to SAM2 segmentation and DINOv3 visual grounding. All inference runs locally on your device for maximum privacy.
+
 ### Core Capabilities
 
 - 🔍 **Detection** — YOLO object detection, DINOv3 open-vocabulary grounding, person re-identification (ReID)
