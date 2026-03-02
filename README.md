@@ -54,72 +54,54 @@
 
 ---
 
-### 🗺️ DeepCamera Roadmap
-
-DeepCamera is evolving into a full AI skill platform. Planned features:
-
-- [ ] **Upgrade object detection** to 2026 state-of-the-art YOLO models
-- [ ] **VLM analysis backend** — offline scene understanding of recorded clips using vision language models
-- [ ] **AI Studios backend** — SAM2 interactive segmentation, DINOv3 grounding, depth estimation, feature extraction
-- [ ] **Direct camera provider plugins** — Blink, Ring, Eufy, Reolink, Tapo, RTSP/ONVIF (beyond Home Assistant)
-- [ ] **Messaging channel plugins** — Telegram, Discord, Slack, WhatsApp
-- [ ] **Automation triggers** — MQTT, webhooks, Home Assistant events
-- [ ] **go2rtc streaming** — RTSP to WebRTC live view
-- [x] **Skill architecture** — pluggable `SKILL.md` interface for all capabilities
-
 ---
 
 ## 🎯 Overview
 
-DeepCamera transforms traditional surveillance cameras and CCTV/NVR systems into intelligent monitoring solutions using advanced machine learning technologies. It provides:
+DeepCamera is an **open-source AI skill platform** that transforms any camera into an intelligent monitoring system. It provides a growing catalog of pluggable AI skills — from real-time object detection and person re-identification to VLM scene analysis, interactive segmentation, and smart home automation.
 
-- Open-source facial recognition for intrusion detection
-- Fall detection capabilities
-- Smart parking lot monitoring
-- Local inference engine for privacy and performance
+Each skill is a self-contained module with its own model, parameters, and communication protocol. Skills are installed, configured, and orchestrated through [SharpAI Aegis](https://www.sharpai.org) — the desktop companion that adds LLM-powered setup, agent chat, and smart alerts.
 
-SharpAI-hub is the cloud platform that enables rapid deployment of AI applications to your CCTV cameras and edge devices.
+### Core Capabilities
 
-## ✨ Key Features
+- 🔍 **Detection** — YOLO object detection, DINOv3 open-vocabulary grounding, person re-identification (ReID)
+- 🧠 **Analysis** — VLM scene understanding of recorded clips, SAM2 interactive segmentation
+- 🎨 **Transformation** — Depth Anything v2 real-time depth maps
+- 🏷️ **Annotation** — AI-assisted dataset creation with COCO export
+- 📷 **Camera Providers** — Eufy, Reolink, Tapo (RTSP/ONVIF)
+- 📺 **Streaming** — Multi-camera RTSP → WebRTC via go2rtc
+- 💬 **Channels** — Matrix, LINE, Signal messaging for the Clawdbot agent
+- ⚡ **Automation** — MQTT, webhooks, Home Assistant triggers
+- 🏠 **Integrations** — Bidirectional Home Assistant bridge
 
-### 🤖 Advanced AI Capabilities
-- Facial Recognition
-- Person Re-identification (RE-ID)
-- Parking Space Management
-- Fall Detection
-- More features in development
+## 🧩 Skill Catalog
 
-### 📊 Professional ML Pipeline
-- Feature clustering with Milvus vector database
-- Data labeling with Labelstudio
-- Comprehensive model training workflow
+Every skill lives in [`skills/`](skills/) with a `SKILL.md` manifest, `requirements.txt`, and working Python script. See the [Skill Development Guide](docs/skill-development.md) to build your own.
 
-### 💻 Edge AI Development
-- Containerized AI frameworks
-- Browser-based desktop environment
-- No VNC client installation needed
+| Category | Skill | What It Does |
+|----------|-------|--------------|
+| **Detection** | [`yolo-detection-2026`](skills/detection/yolo-detection-2026/) | Real-time 80+ class object detection |
+| | [`dinov3-grounding`](skills/detection/dinov3-grounding/) | Open-vocabulary detection — describe what to find |
+| | [`person-recognition`](skills/detection/person-recognition/) | Re-identify individuals across cameras |
+| **Analysis** | [`vlm-scene-analysis`](skills/analysis/vlm-scene-analysis/) | Describe what happened in recorded clips |
+| | [`sam2-segmentation`](skills/analysis/sam2-segmentation/) | Click-to-segment with pixel-perfect masks |
+| **Transformation** | [`depth-estimation`](skills/transformation/depth-estimation/) | Monocular depth maps with Depth Anything v2 |
+| **Annotation** | [`dataset-annotation`](skills/annotation/dataset-annotation/) | AI-assisted labeling → COCO export |
+| **Camera Providers** | [`eufy`](skills/camera-providers/eufy/) · [`reolink`](skills/camera-providers/reolink/) · [`tapo`](skills/camera-providers/tapo/) | Direct camera integrations via RTSP |
+| **Streaming** | [`go2rtc-cameras`](skills/streaming/go2rtc-cameras/) | RTSP → WebRTC live view |
+| **Channels** | [`matrix`](skills/channels/matrix/) · [`line`](skills/channels/line/) · [`signal`](skills/channels/signal/) | Messaging channels for Clawdbot agent |
+| **Automation** | [`mqtt`](skills/automation/mqtt/) · [`webhook`](skills/automation/webhook/) · [`ha-trigger`](skills/automation/ha-trigger/) | Event-driven automation triggers |
+| **Integrations** | [`homeassistant-bridge`](skills/integrations/homeassistant-bridge/) | HA cameras in ↔ detection results out |
 
-DeepCamera empowers your traditional surveillance cameras and CCTV/NVR with machine learning technologies. 
-It provides open source facial recognition based intrusion detection, fall detection and parking lot monitoring with the inference engine on your local device.
+> **Registry:** All skills are indexed in [`skills.json`](skills.json) for programmatic discovery.
 
-SharpAI-hub is the cloud hosting for AI applications which help you deploy AI applications with your CCTV camera on your edge device in minutes. 
+### 🗺️ Roadmap
 
-<details>
-  <summary><h1>Features</h1></summary>
-
-  ## Empower any camera with the state of the art AI
-  - facial recognition
-  - person recognition(RE-ID)
-  - parking lot management
-  - fall detection
-  - more comming 
-  ## ML pipeline for AI camera/CCTV development
-  - feature clustering with vector database Milvus
-  - labelling with Labelstudio
-  ## Easy to use Edge AI development environment
-  - AI frameworks in docker
-  - desktop in docker with web vnc client, so you don't need even install vnc client
-</details>
+- [x] **Skill architecture** — pluggable `SKILL.md` interface for all capabilities
+- [x] **Full skill catalog** — 18 skills across 9 categories with working scripts
+- [ ] **Skill Store UI** — browse, install, and configure skills from Aegis
+- [ ] **Custom skill packaging** — community-contributed skills via GitHub
+- [ ] **GPU-optimized containers** — one-click Docker deployment per skill
 
 ## 🚀 Applications
 
