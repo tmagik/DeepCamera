@@ -27,32 +27,37 @@
 
 <div align="center">
 
-### 🛡️ Introducing [SharpAI Aegis](https://www.sharpai.org) — Desktop App for DeepCamera
+### 🛡️ [SharpAI Aegis](https://www.sharpai.org) — Your AI Security Camera Agent
 
-**Use DeepCamera's AI skills through a desktop app with LLM-powered setup, agent chat, and smart alerts — connected to your mobile via Discord / Telegram / Slack.**
+**An LLM-powered agent that watches your cameras, understands what's happening, remembers patterns, and guards your home — using local or cloud AI.**
 
-[SharpAI Aegis](https://www.sharpai.org) is the desktop companion for DeepCamera. It uses LLM to automatically set up your environment, configure camera skills, and manage the full AI pipeline — no manual Docker or CLI required. It also adds an intelligent agent layer: persistent memory, agentic chat with your cameras, AI video generation, voice (TTS), and conversational messaging via Discord / Telegram / Slack.
+[SharpAI Aegis](https://www.sharpai.org) turns DeepCamera's open-source AI camera skills into an autonomous security guard. It uses local VLM (Qwen, DeepSeek, SmolVLM, LLaVA) to analyze your camera feeds, LLM to reason about what it sees, and agentic memory to learn your home. Talk to it from your phone via Telegram, Discord, or Slack — ask what happened, get smart alerts, or generate AI video recaps.
 
-[**📦 Download SharpAI Aegis**](https://www.sharpai.org)
+- 🧠 **Watches & Understands** — VLM scene analysis on every camera event
+- 🗃️ **Remembers** — Agentic memory learns your household patterns
+- 🛡️ **Guards** — Smart alerts that reduce noise from day one
+- 🗣️ **Talks** — Chat with your cameras via Telegram, Discord, Slack
+- 🔌 **Pluggable** — Every skill adds a new ability via [open protocol](docs/skill-development.md)
+- 🏠 **Local-first** — Runs on your Mac Mini or AI PC. Cloud (OpenAI, Google, Anthropic) optional.
+
+[**📦 Download SharpAI Aegis →**](https://www.sharpai.org)
 
 </div>
 
 <table>
 <tr>
 <td width="50%">
-<p align="center"><b>Browse & Run VLMs Locally from HuggingFace</b></p>
-<img src="screenshots/aegis-vlm-browser.png" alt="SharpAI Aegis — Browse and download vision language models from HuggingFace" width="100%">
-<p align="center"><em>Download and run SmolVLM2, Qwen-VL, LFM2.5, LLaVA, MiniCPM-V directly on your machine. Even a Mac M1 Mini 8GB works.</em></p>
+<p align="center"><b>Run Local VLMs from HuggingFace — Even on Mac Mini 8GB</b></p>
+<img src="screenshots/aegis-vlm-browser.png" alt="SharpAI Aegis — Browse and run local VLM models for AI camera video analysis" width="100%">
+<p align="center"><em>Download and run SmolVLM2, Qwen-VL, LLaVA, MiniCPM-V locally. Your AI security camera agent sees through these eyes.</em></p>
 </td>
 <td width="50%">
-<p align="center"><b>Chat with your AI Security Agent</b></p>
-<img src="screenshots/aegis-chat-agent.png" alt="SharpAI Aegis — Ask your agent what happened and get real answers" width="100%">
-<p align="center"><em>Ask "anyone entering the room?" — Aegis searches your footage and gives you a real answer with timestamps and clips.</em></p>
+<p align="center"><b>Chat with Your AI Camera Agent</b></p>
+<img src="screenshots/aegis-chat-agent.png" alt="SharpAI Aegis — LLM-powered agentic security camera chat" width="100%">
+<p align="center"><em>"Who was at the door?" — Your agent searches footage, reasons about what happened, and answers with timestamps and clips.</em></p>
 </td>
 </tr>
 </table>
-
----
 
 ---
 
@@ -78,7 +83,7 @@ Building on DeepCamera's proven open-source facial recognition, person re-identi
 
 ## 🧩 Skill Catalog
 
-Every skill lives in [`skills/`](skills/) with a `SKILL.md` manifest, `requirements.txt`, and working Python script. See the [Skill Development Guide](docs/skill-development.md) to build your own.
+Each skill gives your AI camera agent a new ability — detection, analysis, camera integration, messaging, and automation work together so it can see, think, and act. Every skill lives in [`skills/`](skills/) with a `SKILL.md` manifest, `requirements.txt`, and working Python script. See the [Skill Development Guide](docs/skill-development.md) and [Platform Parameters](docs/skill-params.md) to build your own.
 
 | Category | Skill | What It Does |
 |----------|-------|--------------|
