@@ -62,7 +62,7 @@ The easiest way to run DeepCamera's AI skills. Aegis connects everything — cam
 - 📦 **One-click skill deployment** — install skills from the catalog with AI-assisted troubleshooting
 - 🔽 **One-click HuggingFace downloads** — browse and run Qwen, DeepSeek, SmolVLM, LLaVA, MiniCPM-V
 - 📊 **Find the best VLM for your machine** — benchmark models on your own hardware with HomeSec-Bench
-- 💬 **Smart alerts** — Telegram, Discord, or Slack notifications with LLM reasoning
+- 💬 **Talk to your guard** — via Telegram, Discord, or Slack. Ask what happened, tell it what to watch for, get AI-reasoned answers with footage.
 
 <div align="center">
 
