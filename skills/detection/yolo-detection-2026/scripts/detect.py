@@ -18,12 +18,12 @@ import signal
 from pathlib import Path
 
 
-# Model size → ultralytics model name mapping
+# Model size → ultralytics model name mapping (YOLO26, released Jan 2026)
 MODEL_SIZE_MAP = {
-    "nano": "yolo11n",
-    "small": "yolo11s",
-    "medium": "yolo11m",
-    "large": "yolo11l",
+    "nano": "yolo26n",
+    "small": "yolo26s",
+    "medium": "yolo26m",
+    "large": "yolo26l",
 }
 
 
