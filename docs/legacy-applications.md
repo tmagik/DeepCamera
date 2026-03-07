@@ -259,3 +259,20 @@ sharpai-cli <application name> start
 - DaHua / Lorex / AMCREST: URL Path: `/cam/realmonitor?channel=1&subtype=0` Port: `554`
 - IP Camera Lite on iOS: URL Path: `/live` Port: `8554`
 - Nest Camera indoor/outdoor by Home-Assistant integration
+
+---
+
+## ❓ FAQ
+
+### Installation & Setup
+- [How to install Python3](https://www.python.org/downloads)
+- [How to install pip3](https://pip.pypa.io/en/stable/installation)
+- [How to configure RTSP on GUI](https://github.com/SharpAI/DeepCamera/blob/master/docs/shinobi.md)
+- [Camera streaming URL formats](https://shinobi.video)
+
+### Jetson Nano Docker-compose
+```bash
+sudo apt-get install -y libhdf5-dev python3 python3-pip
+pip3 install -U pip
+sudo pip3 install docker-compose==1.27.4
+```

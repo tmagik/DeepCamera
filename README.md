@@ -160,19 +160,5 @@ For the modern experience, use [SharpAI Aegis](https://www.sharpai.org).
 - 🐛 [GitHub Issues](https://github.com/SharpAI/DeepCamera/issues) — technical support and bug reports
 - 🏢 [Commercial Support](https://join.slack.com/t/sharpai/shared_invite/zt-1nt1g0dkg-navTKx6REgeq5L3eoC1Pqg) — pipeline optimization, custom models, edge deployment
 
-## ❓ FAQ
-
-### Installation & Setup
-- [How to install Python3](https://www.python.org/downloads)
-- [How to install pip3](https://pip.pypa.io/en/stable/installation)
-- [How to configure RTSP on GUI](https://github.com/SharpAI/DeepCamera/blob/master/docs/shinobi.md)
-- [Camera streaming URL formats](https://shinobi.video)
-
-### Jetson Nano Docker-compose
-```bash
-sudo apt-get install -y libhdf5-dev python3 python3-pip
-pip3 install -U pip
-sudo pip3 install docker-compose==1.27.4
-```
 
 ## [Contributions](Contributions.md)
