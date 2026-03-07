@@ -25,13 +25,7 @@
 
 ---
 
-<div align="center">
-
-### 🛡️ [SharpAI Aegis](https://www.sharpai.org) — Your AI Security Camera Agent
-
-**An LLM-powered agent that watches your cameras, understands what's happening, remembers patterns, and guards your home.**
-
-DeepCamera's open-source skills give your cameras AI — VLM scene analysis, object detection, person re-identification, all running locally with models like Qwen, DeepSeek, SmolVLM, and LLaVA. To orchestrate them into a complete security system, [SharpAI Aegis](https://www.sharpai.org) connects the skills to your cameras, adds LLM reasoning and persistent memory, and alerts you via Telegram, Discord, or Slack.
+DeepCamera's open-source skills give your cameras AI — VLM scene analysis, object detection, person re-identification, all running locally with models like Qwen, DeepSeek, SmolVLM, and LLaVA.
 
 - 🧠 **Watches & Understands** — VLM scene analysis on every camera event
 - 🗃️ **Remembers** — Agentic memory learns your household patterns
@@ -41,6 +35,19 @@ DeepCamera's open-source skills give your cameras AI — VLM scene analysis, obj
 - 🏠 **Local-first** — Runs on your Mac Mini or AI PC. Cloud (OpenAI, Google, Anthropic) optional.
 
 Built on DeepCamera's proven open-source facial recognition, person re-identification (RE-ID), fall detection, and CCTV/NVR surveillance monitoring — the skill catalog extends these machine learning capabilities with modern AI: VLM scene understanding, SAM2 segmentation, DINOv3 visual grounding, and more. All inference runs locally for maximum privacy.
+
+## 🚀 Getting Started with [SharpAI Aegis](https://www.sharpai.org)
+
+The easiest way to run DeepCamera's AI skills. Aegis connects everything — cameras, models, skills, and you.
+
+- 📷 **Connect cameras in seconds** — add RTSP/ONVIF cameras, webcams, or iPhone cameras for a quick test
+- 🤖 **Built-in local LLM & VLM** — llama-server included, no separate setup needed
+- 📦 **One-click skill deployment** — install skills from the catalog with AI-assisted troubleshooting
+- 🔽 **One-click HuggingFace downloads** — browse and run Qwen, DeepSeek, SmolVLM, LLaVA, MiniCPM-V
+- 📊 **Find the best VLM for your machine** — benchmark models on your own hardware with HomeSec-Bench
+- 💬 **Smart alerts** — Telegram, Discord, or Slack notifications with LLM reasoning
+
+<div align="center">
 
 [**📦 Download SharpAI Aegis →**](https://www.sharpai.org)
 
@@ -118,16 +125,10 @@ Running on a **Mac M1 Mini 8GB** with local VLMs:
 
 ---
 
-## 🚀 Applications
-
-### Modern: SharpAI Aegis (Recommended)
-
-Use [SharpAI Aegis](https://www.sharpai.org) for the full experience — LLM-powered setup, agent chat, VLM video analysis, smart alerts via Telegram / Discord / Slack. No Docker or CLI required.
-
-[**📦 Download SharpAI Aegis →**](https://www.sharpai.org)
+## 📦 More Applications
 
 <details>
-<summary><h3>📦 Legacy Applications (SharpAI-Hub CLI)</h3></summary>
+<summary><b>Legacy Applications (SharpAI-Hub CLI)</b></summary>
 
 These applications use the `sharpai-cli` Docker-based workflow.
 For the modern experience, use [SharpAI Aegis](https://www.sharpai.org).
