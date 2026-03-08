@@ -133,6 +133,38 @@
       "ui_unlocks": [
         "benchmark_report"
       ]
+    },
+    {
+      "id": "homesafe-bench",
+      "name": "HomeSafe Indoor Safety Benchmark",
+      "description": "VLM evaluation suite for indoor home safety hazard detection — 40 tests across 5 categories: fire/smoke, electrical, trip/fall, child safety, falling objects.",
+      "version": "1.0.0",
+      "category": "analysis",
+      "path": "skills/analysis/homesafe-bench",
+      "tags": [
+        "benchmark",
+        "vlm",
+        "safety",
+        "hazard",
+        "indoor"
+      ],
+      "platforms": [
+        "linux-x64",
+        "linux-arm64",
+        "darwin-arm64",
+        "darwin-x64",
+        "win-x64"
+      ],
+      "requirements": {
+        "node": ">=18",
+        "ram_gb": 2
+      },
+      "capabilities": [
+        "benchmark"
+      ],
+      "ui_unlocks": [
+        "benchmark_report"
+      ]
     }
   ]
 }

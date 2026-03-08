@@ -267,6 +267,39 @@ function skip(name, reason) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DISK SPACE CHECK
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function checkDiskSpace(targetDir, requiredGB) {
+    try {
+        fs.mkdirSync(targetDir, { recursive: true });
+        // Use df to check available space on the partition
+        const dfOutput = execSync(`df -k "${targetDir}"`, { encoding: 'utf8' });
+        const lines = dfOutput.trim().split('\n');
+        if (lines.length >= 2) {
+            const parts = lines[1].split(/\s+/);
+            const availableKB = parseInt(parts[3], 10);
+            if (!isNaN(availableKB)) {
+                const availableGB = availableKB / (1024 * 1024);
+                if (availableGB < requiredGB) {
+                    log(`  ❌ Insufficient disk space`);
+                    log(`     Required: ${requiredGB.toFixed(1)} GB`);
+                    log(`     Available: ${availableGB.toFixed(1)} GB`);
+                    log(`     Location: ${targetDir}`);
+                    emit({ event: 'error', message: `Insufficient disk space: need ${requiredGB}GB, have ${availableGB.toFixed(1)}GB` });
+                    process.exit(1);
+                }
+                log(`  💾 Disk: ${availableGB.toFixed(1)} GB available (need ${requiredGB} GB) ✓`);
+                return availableGB;
+            }
+        }
+    } catch (err) {
+        log(`  ⚠️  Could not check disk space: ${err.message} — proceeding anyway`);
+    }
+    return -1; // unknown
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // VIDEO ACQUISITION
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -658,6 +691,10 @@ async function main() {
         system: results.system.cpus,
         totalVideos: MAX_VIDEOS,
     });
+
+    // Disk space check — full needs ~15GB, subset ~2GB
+    const requiredGB = TEST_MODE === 'full' ? 15 : 2;
+    checkDiskSpace(VIDEO_CACHE_DIR, requiredGB);
 
     // Ensure cache dirs
     fs.mkdirSync(VIDEO_CACHE_DIR, { recursive: true });
