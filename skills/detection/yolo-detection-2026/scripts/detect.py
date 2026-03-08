@@ -172,7 +172,7 @@ def parse_args():
     parser.add_argument("--config", type=str, help="Path to config JSON file")
     parser.add_argument("--model-size", type=str, default="nano",
                         choices=["nano", "small", "medium", "large"])
-    parser.add_argument("--confidence", type=float, default=0.5)
+    parser.add_argument("--confidence", type=float, default=0.8)
     parser.add_argument("--classes", type=str, default="person,car,dog,cat")
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "cuda", "mps", "rocm"])
@@ -223,7 +223,7 @@ def main():
     config = load_config(args)
 
     model_size = config.get("model_size", "nano")
-    confidence = config.get("confidence", 0.5)
+    confidence = config.get("confidence", 0.8)
     fps = config.get("fps", 5)
     use_optimized = config.get("use_optimized", config.get("use_coreml", True))
     if isinstance(use_optimized, str):

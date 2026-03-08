@@ -5,6 +5,7 @@ version: 2.0.0
 icon: assets/icon.png
 entry: scripts/detect.py
 deploy: deploy.sh
+smoke_test: "python3 -m py_compile scripts/detect.py"
 
 parameters:
   - name: auto_start
@@ -27,7 +28,7 @@ parameters:
     type: number
     min: 0.1
     max: 1.0
-    default: 0.5
+    default: 0.8
     group: Model
 
   - name: classes

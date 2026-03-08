@@ -23,7 +23,7 @@ params:
   - key: confidence
     label: Confidence Threshold
     type: number
-    default: 0.5
+    default: 0.8
     description: "Minimum detection confidence (0.1–1.0)"
 
   - key: fps
