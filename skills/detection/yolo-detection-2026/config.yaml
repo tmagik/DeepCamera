@@ -57,9 +57,10 @@ params:
       - { value: mps, label: "Apple Silicon (MPS)" }
       - { value: rocm, label: "AMD ROCm" }
 
-  - key: use_coreml
-    label: CoreML Acceleration
+  - key: use_optimized
+    label: Hardware Acceleration
     type: boolean
     default: true
-    description: "Convert model to CoreML for ~2x faster inference on Apple Silicon (ANE)"
+    description: "Auto-convert model to optimized format (TensorRT/CoreML/OpenVINO/ONNX) for faster inference"
+
 

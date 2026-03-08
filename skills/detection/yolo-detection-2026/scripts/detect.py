@@ -171,7 +171,7 @@ def main():
     model_size = config.get("model_size", "nano")
     confidence = config.get("confidence", 0.5)
     fps = config.get("fps", 5)
-    use_optimized = config.get("use_coreml", True)  # legacy key, now covers all backends
+    use_optimized = config.get("use_optimized", config.get("use_coreml", True))
     if isinstance(use_optimized, str):
         use_optimized = use_optimized.lower() in ("true", "1", "yes")
 

@@ -30,7 +30,7 @@ Each skill is a self-contained module with its own model, parameters, and [commu
 
 | Category | Skill | What It Does | Status |
 |----------|-------|--------------|:------:|
-| **Detection** | [`yolo-detection-2026`](skills/detection/yolo-detection-2026/) | Real-time 80+ class object detection | ✅|
+| **Detection** | [`yolo-detection-2026`](skills/detection/yolo-detection-2026/) | Real-time 80+ class detection — auto-accelerated via TensorRT / CoreML / OpenVINO / ONNX | ✅|
 | | [`dinov3-grounding`](skills/detection/dinov3-grounding/) | Open-vocabulary detection — describe what to find | 📐 |
 | | [`person-recognition`](skills/detection/person-recognition/) | Re-identify individuals across cameras | 📐 |
 | **Analysis** | [`home-security-benchmark`](skills/analysis/home-security-benchmark/) | [131-test evaluation suite](#-homesec-bench--how-secure-is-your-local-ai) for LLM & VLM security performance | ✅ |
@@ -52,6 +52,7 @@ Each skill is a self-contained module with its own model, parameters, and [commu
 
 - [x] **Skill architecture** — pluggable `SKILL.md` interface for all capabilities
 - [x] **Full skill catalog** — 18 skills across 9 categories with working scripts
+- [x] **Hardware environment layer** — shared [`env_config.py`](skills/lib/env_config.py) for auto-detection + model optimization across NVIDIA, AMD, Apple Silicon, Intel, and CPU
 - [ ] **Skill Store UI** — browse, install, and configure skills from Aegis
 - [ ] **Custom skill packaging** — community-contributed skills via GitHub
 - [ ] **GPU-optimized containers** — one-click Docker deployment per skill
