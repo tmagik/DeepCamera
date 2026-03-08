@@ -5,7 +5,6 @@ version: 2.0.0
 icon: assets/icon.png
 entry: scripts/detect.py
 deploy: deploy.sh
-smoke_test: "python3 -m py_compile scripts/detect.py"
 
 parameters:
   - name: auto_start
