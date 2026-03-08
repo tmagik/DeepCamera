@@ -21,9 +21,63 @@ import signal
 import time
 from pathlib import Path
 
-# Add skills/lib to path for shared modules
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "lib"))
-from env_config import HardwareEnv  # noqa: E402
+# Import env_config — try multiple locations:
+# 1. Same directory as detect.py (bundled copy)
+# 2. DeepCamera repo: skills/lib/
+# 3. Inline fallback (basic PyTorch-only mode)
+_script_dir = Path(__file__).resolve().parent
+_lib_candidates = [
+    _script_dir,                                          # bundled alongside detect.py
+    _script_dir.parent.parent.parent.parent / "lib",      # repo: skills/lib/
+    _script_dir.parent / "lib",                           # skill-level lib/
+]
+_env_config_loaded = False
+for _lib_path in _lib_candidates:
+    if (_lib_path / "env_config.py").exists():
+        sys.path.insert(0, str(_lib_path))
+        from env_config import HardwareEnv  # noqa: E402
+        _env_config_loaded = True
+        break
+
+if not _env_config_loaded:
+    # Minimal fallback — PyTorch only, no optimization
+    import types
+    _msg = "[YOLO-2026] WARNING: env_config.py not found, using PyTorch-only fallback"
+    print(_msg, file=sys.stderr, flush=True)
+
+    class HardwareEnv:
+        def __init__(self):
+            self.backend = "cpu"
+            self.device = "cpu"
+            self.export_format = "none"
+            self.gpu_name = ""
+            self.gpu_memory_mb = 0
+            self.driver_version = ""
+            self.framework_ok = False
+            self.export_ms = 0.0
+            self.load_ms = 0.0
+
+        @staticmethod
+        def detect():
+            import torch
+            env = HardwareEnv()
+            if torch.cuda.is_available():
+                env.backend = "cuda"; env.device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                env.backend = "mps"; env.device = "mps"
+            return env
+
+        def load_optimized(self, model_name, use_optimized=True):
+            import time
+            from ultralytics import YOLO
+            t0 = time.perf_counter()
+            model = YOLO(f"{model_name}.pt")
+            model.to(self.device)
+            self.load_ms = (time.perf_counter() - t0) * 1000
+            return model, "pytorch"
+
+        def to_dict(self):
+            return {"backend": self.backend, "device": self.device}
 
 
 # Model size → ultralytics model name mapping (YOLO26, released Jan 2026)

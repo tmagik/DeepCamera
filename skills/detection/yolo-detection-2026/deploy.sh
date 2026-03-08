@@ -84,6 +84,13 @@ PIP="$VENV_DIR/bin/pip"
 
 emit '{"event": "progress", "stage": "venv", "message": "Virtual environment ready"}'
 
+# ─── Step 2.5: Bundle env_config.py alongside detect.py ─────────────────────
+
+if [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/env_config.py" ]; then
+    cp "$LIB_DIR/env_config.py" "$SKILL_DIR/scripts/env_config.py"
+    log "Bundled env_config.py into scripts/"
+fi
+
 # ─── Step 3: Detect hardware via env_config ─────────────────────────────────
 
 BACKEND="cpu"
