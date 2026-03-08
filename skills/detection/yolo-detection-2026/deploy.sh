@@ -160,6 +160,14 @@ fi
 log "Installing dependencies from $REQ_FILE ..."
 emit "{\"event\": \"progress\", \"stage\": \"install\", \"message\": \"Installing $BACKEND dependencies...\"}"
 
+# ROCm: remove CPU-only onnxruntime if present (it shadows onnxruntime-rocm)
+if [ "$BACKEND" = "rocm" ]; then
+    if "$PIP" show onnxruntime &>/dev/null 2>&1; then
+        log "Removing CPU-only onnxruntime to avoid shadowing onnxruntime-rocm..."
+        "$PIP" uninstall -y onnxruntime -q 2>&1 || true
+    fi
+fi
+
 "$PIP" install -r "$REQ_FILE" -q 2>&1 | tail -5 >&2
 
 # ─── Step 5: Pre-convert model to optimized format ───────────────────────────

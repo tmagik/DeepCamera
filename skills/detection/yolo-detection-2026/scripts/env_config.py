@@ -467,13 +467,23 @@ class HardwareEnv:
 
             # Fallback: use the PT model we already loaded
             _log("Falling back to PyTorch model")
-            pt_model.to(self.device)
+            try:
+                pt_model.to(self.device)
+            except Exception as e:
+                _log(f"Device {self.device} unavailable ({e}), falling back to CPU")
+                self.device = "cpu"
+                pt_model.to("cpu")
             self.load_ms = (time.perf_counter() - t0) * 1000
             return pt_model, "pytorch"
 
         # No optimization requested or framework missing
         model = YOLO(f"{model_name}.pt")
-        model.to(self.device)
+        try:
+            model.to(self.device)
+        except Exception as e:
+            _log(f"Device {self.device} unavailable ({e}), falling back to CPU")
+            self.device = "cpu"
+            model.to("cpu")
         self.load_ms = (time.perf_counter() - t0) * 1000
         return model, "pytorch"
 
