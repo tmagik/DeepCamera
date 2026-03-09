@@ -84,15 +84,30 @@ PIP="$VENV_DIR/bin/pip"
 
 emit '{"event": "progress", "stage": "venv", "message": "Virtual environment ready"}'
 
+# ─── Step 2.5: Bundle env_config.py alongside detect.py ─────────────────────
+
+if [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/env_config.py" ]; then
+    cp "$LIB_DIR/env_config.py" "$SKILL_DIR/scripts/env_config.py"
+    log "Bundled env_config.py into scripts/"
+fi
+
 # ─── Step 3: Detect hardware via env_config ─────────────────────────────────
 
 BACKEND="cpu"
 
-if [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/env_config.py" ]; then
+# Find env_config.py — bundled copy or repo lib/
+ENV_CONFIG_DIR=""
+if [ -f "$SKILL_DIR/scripts/env_config.py" ]; then
+    ENV_CONFIG_DIR="$SKILL_DIR/scripts"
+elif [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/env_config.py" ]; then
+    ENV_CONFIG_DIR="$LIB_DIR"
+fi
+
+if [ -n "$ENV_CONFIG_DIR" ]; then
     log "Detecting hardware via env_config.py..."
     DETECT_OUTPUT=$("$VENV_DIR/bin/python" -c "
 import sys
-sys.path.insert(0, '$LIB_DIR')
+sys.path.insert(0, '$ENV_CONFIG_DIR')
 from env_config import HardwareEnv
 env = HardwareEnv.detect()
 print(env.backend)
@@ -114,14 +129,14 @@ print(env.backend)
 else
     log "env_config.py not found, using heuristic detection..."
 
-    # Fallback: inline GPU detection (same as before)
+    # Fallback: inline GPU detection
     if command -v nvidia-smi &>/dev/null; then
         cuda_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
         if [ -n "$cuda_ver" ]; then
             BACKEND="cuda"
             log "Detected NVIDIA GPU (driver: $cuda_ver)"
         fi
-    elif command -v rocm-smi &>/dev/null || [ -d "/opt/rocm" ]; then
+    elif command -v amd-smi &>/dev/null || command -v rocm-smi &>/dev/null || [ -d "/opt/rocm" ]; then
         BACKEND="rocm"
         log "Detected AMD ROCm"
     elif [ "$(uname)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
@@ -145,7 +160,59 @@ fi
 log "Installing dependencies from $REQ_FILE ..."
 emit "{\"event\": \"progress\", \"stage\": \"install\", \"message\": \"Installing $BACKEND dependencies...\"}"
 
-"$PIP" install -r "$REQ_FILE" -q 2>&1 | tail -5 >&2
+if [ "$BACKEND" = "rocm" ]; then
+    # ROCm: detect installed version for correct PyTorch index URL
+    ROCM_VER=""
+    if [ -f /opt/rocm/.info/version ]; then
+        ROCM_VER=$(head -1 /opt/rocm/.info/version | grep -oE '[0-9]+\.[0-9]+')
+    elif command -v amd-smi &>/dev/null; then
+        ROCM_VER=$(amd-smi version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    elif command -v rocminfo &>/dev/null; then
+        ROCM_VER=$(rocminfo 2>/dev/null | grep -i "HSA Runtime" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    fi
+    ROCM_VER="${ROCM_VER:-6.2}"  # fallback if detection fails
+    log "Detected ROCm version: $ROCM_VER"
+
+    # Build list of ROCm versions to try (detected → step down → previous major)
+    ROCM_MAJOR=$(echo "$ROCM_VER" | cut -d. -f1)
+    ROCM_MINOR=$(echo "$ROCM_VER" | cut -d. -f2)
+    ROCM_CANDIDATES="$ROCM_VER"
+    m=$((ROCM_MINOR - 1))
+    while [ "$m" -ge 0 ]; do
+        ROCM_CANDIDATES="$ROCM_CANDIDATES ${ROCM_MAJOR}.${m}"
+        m=$((m - 1))
+    done
+    # Also try previous major version (e.g., 6.4, 6.2 if on 7.x)
+    prev_major=$((ROCM_MAJOR - 1))
+    for pm in 4 3 2 1 0; do
+        ROCM_CANDIDATES="$ROCM_CANDIDATES ${prev_major}.${pm}"
+    done
+
+    # Phase 1: Try each candidate until PyTorch installs successfully
+    TORCH_INSTALLED=false
+    for ver in $ROCM_CANDIDATES; do
+        log "Trying PyTorch for ROCm $ver ..."
+        if "$PIP" install torch torchvision --index-url "https://download.pytorch.org/whl/rocm${ver}" -q 2>&1; then
+            log "Installed PyTorch with ROCm $ver support"
+            TORCH_INSTALLED=true
+            break
+        fi
+    done
+
+    if [ "$TORCH_INSTALLED" = false ]; then
+        log "WARNING: No PyTorch ROCm wheels found, installing CPU PyTorch from PyPI"
+        "$PIP" install torch torchvision -q 2>&1 | tail -3 >&2
+    fi
+
+    # Phase 2: remaining packages (ultralytics, onnxruntime-rocm, etc.)
+    "$PIP" install ultralytics onnxruntime-rocm 'onnx>=1.12.0,<2.0.0' 'onnxslim>=0.1.71' \
+        'numpy>=1.24.0' 'opencv-python-headless>=4.8.0' 'Pillow>=10.0.0' -q 2>&1 | tail -3 >&2
+
+    # Prevent ultralytics from auto-installing CPU onnxruntime during export
+    export YOLO_AUTOINSTALL=0
+else
+    "$PIP" install -r "$REQ_FILE" -q 2>&1 | tail -5 >&2
+fi
 
 # ─── Step 5: Pre-convert model to optimized format ───────────────────────────
 
@@ -155,7 +222,7 @@ if [ "$BACKEND" != "cpu" ] || [ -f "$SKILL_DIR/requirements_cpu.txt" ]; then
 
     "$VENV_DIR/bin/python" -c "
 import sys
-sys.path.insert(0, '$LIB_DIR')
+sys.path.insert(0, '$ENV_CONFIG_DIR')
 from env_config import HardwareEnv
 env = HardwareEnv.detect()
 
@@ -184,7 +251,7 @@ fi
 log "Verifying installation..."
 "$VENV_DIR/bin/python" -c "
 import sys
-sys.path.insert(0, '$LIB_DIR')
+sys.path.insert(0, '$ENV_CONFIG_DIR')
 from env_config import HardwareEnv
 import json
 

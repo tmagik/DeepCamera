@@ -6,6 +6,12 @@ icon: assets/icon.png
 entry: scripts/detect.py
 deploy: deploy.sh
 
+requirements:
+  python: ">=3.9"
+  ultralytics: ">=8.3.0"
+  torch: ">=2.4.0"
+  platforms: ["linux", "macos", "windows"]
+
 parameters:
   - name: auto_start
     label: "Auto Start"
@@ -27,7 +33,7 @@ parameters:
     type: number
     min: 0.1
     max: 1.0
-    default: 0.5
+    default: 0.8
     group: Model
 
   - name: classes
