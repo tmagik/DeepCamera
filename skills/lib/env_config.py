@@ -51,9 +51,9 @@ BACKEND_SPECS = {
     ),
     "rocm": BackendSpec(
         name="rocm",
-        export_format="onnx",
-        model_suffix=".onnx",
-        half=False,  # ONNX Runtime ROCm handles precision internally
+        export_format="pytorch",     # PyTorch + HIP — ultralytics ONNX doesn't support ROCMExecutionProvider
+        model_suffix=".pt",
+        half=False,
     ),
     "mps": BackendSpec(
         name="mps",
