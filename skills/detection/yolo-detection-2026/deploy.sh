@@ -161,10 +161,21 @@ log "Installing dependencies from $REQ_FILE ..."
 emit "{\"event\": \"progress\", \"stage\": \"install\", \"message\": \"Installing $BACKEND dependencies...\"}"
 
 if [ "$BACKEND" = "rocm" ]; then
-    # ROCm: two-phase install to get the correct packages
+    # ROCm: detect installed version for correct PyTorch index URL
+    ROCM_VER=""
+    if [ -f /opt/rocm/.info/version ]; then
+        ROCM_VER=$(head -1 /opt/rocm/.info/version | grep -oE '[0-9]+\.[0-9]+')
+    elif command -v amd-smi &>/dev/null; then
+        ROCM_VER=$(amd-smi version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    elif command -v rocminfo &>/dev/null; then
+        ROCM_VER=$(rocminfo 2>/dev/null | grep -i "HSA Runtime" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    fi
+    ROCM_VER="${ROCM_VER:-6.2}"  # fallback if detection fails
+    log "Detected ROCm version: $ROCM_VER"
+
     # Phase 1: PyTorch from ROCm index (--index-url forces ROCm build, not CUDA)
-    log "Installing PyTorch with ROCm support..."
-    "$PIP" install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2 -q 2>&1 | tail -3 >&2
+    log "Installing PyTorch with ROCm $ROCM_VER support..."
+    "$PIP" install torch torchvision --index-url "https://download.pytorch.org/whl/rocm${ROCM_VER}" -q 2>&1 | tail -3 >&2
 
     # Phase 2: remaining packages (ultralytics, onnxruntime-rocm, etc.)
     "$PIP" install ultralytics onnxruntime-rocm 'onnx>=1.12.0,<2.0.0' 'onnxslim>=0.1.71' \

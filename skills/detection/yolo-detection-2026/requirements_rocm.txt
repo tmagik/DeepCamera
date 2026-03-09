@@ -1,6 +1,6 @@
 # YOLO 2026 — ROCm (AMD GPU) requirements
-# Installs PyTorch with ROCm 6.2 support
---extra-index-url https://download.pytorch.org/whl/rocm6.2
+# NOTE: deploy.sh auto-detects the installed ROCm version and installs
+# PyTorch from the matching index URL. This file is a reference manifest.
 torch>=2.4.0
 torchvision>=0.19.0
 ultralytics>=8.3.0
