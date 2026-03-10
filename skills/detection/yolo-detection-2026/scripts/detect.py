@@ -268,18 +268,19 @@ def main():
         emit({"event": "error", "message": f"Failed to load model: {e}", "retriable": False})
         sys.exit(1)
 
-    # Graceful shutdown
-    running = True
+    # Graceful shutdown — exit immediately with code 0.
+    # The stdin read loop blocks, so setting a flag doesn't work;
+    # we must exit in the signal handler to avoid being killed (code null).
     def handle_signal(signum, frame):
-        nonlocal running
-        running = False
+        sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+        log(f"Received {sig_name}, shutting down gracefully")
+        perf.emit_final()
+        sys.exit(0)
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
     # Main loop: read frames from stdin, output detections to stdout
     for line in sys.stdin:
-        if not running:
-            break
 
         line = line.strip()
         if not line:
