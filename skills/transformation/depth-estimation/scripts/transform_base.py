@@ -46,6 +46,7 @@ if __name__ == "__main__":
 
 import sys
 import json
+import os
 import signal
 import time
 import argparse
@@ -53,6 +54,52 @@ import tempfile
 import base64
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Hardware detection — reuse env_config.py from skills/lib/
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_script_dir = Path(__file__).resolve().parent
+_lib_candidates = [
+    _script_dir,                                          # bundled alongside script
+    _script_dir.parent.parent.parent.parent / "lib",      # repo: skills/lib/
+    _script_dir.parent / "lib",                           # skill-level lib/
+]
+_env_config_loaded = False
+for _lib_path in _lib_candidates:
+    if (_lib_path / "env_config.py").exists():
+        sys.path.insert(0, str(_lib_path))
+        from env_config import HardwareEnv  # noqa: E402
+        _env_config_loaded = True
+        break
+
+if not _env_config_loaded:
+    # Minimal fallback — auto-detect via PyTorch only
+    class HardwareEnv:  # type: ignore[no-redef]
+        def __init__(self):
+            self.backend = "cpu"
+            self.device = "cpu"
+            self.gpu_name = ""
+            self.gpu_memory_mb = 0
+            self.export_format = "none"
+            self.framework_ok = False
+
+        @staticmethod
+        def detect():
+            env = HardwareEnv()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    env.backend = "cuda"; env.device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    env.backend = "mps"; env.device = "mps"
+            except ImportError:
+                pass
+            return env
+
+        def to_dict(self):
+            return {"backend": self.backend, "device": self.device}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -152,6 +199,7 @@ class TransformSkillBase(ABC):
 
     def __init__(self):
         self.device = "cpu"
+        self.env = None  # HardwareEnv — populated in run()
         self.config = {}
         self.perf = PerfTracker()
         self._running = True
@@ -206,11 +254,17 @@ class TransformSkillBase(ABC):
         """Parse args, load model, enter stdin loop."""
         args = self._parse_args()
         self.config = self._load_config(args)
-        self.device = self._select_device(self.config.get("device", "auto"))
+
+        # Hardware detection — full multi-backend probe
+        device_pref = self.config.get("device", "auto")
+        self.env = self._detect_hardware(device_pref)
+        self.device = self.env.device
 
         # Load model
         try:
-            _emit({"event": "progress", "stage": "init", "message": "Loading model..."})
+            gpu_msg = f"{self.env.gpu_name} ({self.env.backend})" if self.env.gpu_name else self.env.backend
+            _emit({"event": "progress", "stage": "init", "message": f"Hardware: {gpu_msg}"})
+            _emit({"event": "progress", "stage": "model", "message": "Loading model..."})
             t0 = time.perf_counter()
             ready_fields = self.load_model(self.config)
             self.perf.model_load_ms = (time.perf_counter() - t0) * 1000
@@ -218,6 +272,8 @@ class TransformSkillBase(ABC):
             ready_event = {
                 "event": "ready",
                 "model_load_ms": round(self.perf.model_load_ms, 1),
+                "backend": self.env.backend,
+                "gpu": self.env.gpu_name,
                 **ready_fields,
             }
             _emit(ready_event)
@@ -348,7 +404,6 @@ class TransformSkillBase(ABC):
         return parser.parse_args()
 
     def _load_config(self, args) -> dict:
-        import os
         env_params = os.environ.get("AEGIS_SKILL_PARAMS")
         if env_params:
             try:
@@ -363,15 +418,20 @@ class TransformSkillBase(ABC):
         return {"device": args.device}
 
     @staticmethod
-    def _select_device(pref: str) -> str:
-        if pref != "auto":
-            return pref
-        try:
-            import torch
-            if torch.cuda.is_available():
-                return "cuda"
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                return "mps"
-        except ImportError:
-            pass
-        return "cpu"
+    def _detect_hardware(device_pref: str = "auto") -> HardwareEnv:
+        """
+        Full hardware detection using shared env_config.py.
+
+        Supports: NVIDIA CUDA, AMD ROCm, Apple MPS/Neural Engine,
+                  Intel OpenVINO/NPU, CPU fallback.
+
+        Returns a HardwareEnv with .backend, .device, .gpu_name, etc.
+        """
+        env = HardwareEnv.detect()
+
+        # Honour explicit device preference
+        if device_pref != "auto":
+            env.device = device_pref
+            env.backend = device_pref
+
+        return env
