@@ -1,0 +1,12 @@
+# Depth Estimation — CUDA (NVIDIA GPU) requirements
+# Installs PyTorch with CUDA 12.4 support + TensorRT FP16 acceleration
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch~=2.7.0
+torchvision~=0.22.0
+depth-anything-v2>=0.1.0
+tensorrt>=10.0
+huggingface_hub>=0.20.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+matplotlib>=3.7.0
