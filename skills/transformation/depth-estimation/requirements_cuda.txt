@@ -4,6 +4,7 @@
 # onnxruntime-gpu includes both CUDA and TensorRT execution providers.
 
 onnxruntime-gpu>=1.17.0
+nvidia-cudnn-cu12>=9.0
 
 # ── Common dependencies ─────────────────────────────────────────────
 huggingface_hub>=0.20.0

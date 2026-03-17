@@ -236,8 +236,33 @@ class DepthEstimationSkill(TransformSkillBase):
 
     # ── ONNX Runtime backend (Windows/Linux — all GPUs) ────────────────
 
+    @staticmethod
+    def _add_nvidia_dll_paths():
+        """Add pip-installed NVIDIA DLL directories to PATH so ORT finds cudnn, cublas, etc."""
+        import site
+        import glob
+
+        for sp in site.getsitepackages():
+            nvidia_dir = os.path.join(sp, "nvidia")
+            if not os.path.isdir(nvidia_dir):
+                continue
+            for bin_dir in glob.glob(os.path.join(nvidia_dir, "*", "bin")):
+                if bin_dir not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+                    # Python 3.8+ on Windows: also register via os.add_dll_directory
+                    if hasattr(os, "add_dll_directory"):
+                        try:
+                            os.add_dll_directory(bin_dir)
+                        except OSError:
+                            pass
+                    _log(f"Added NVIDIA DLL path: {bin_dir}", "DepthEstimation")
+
+
     def _load_onnx(self, model_name: str, config: dict) -> dict:
         """Load ONNX model with best available EP: CUDA → TRT → DirectML → CPU."""
+        # Add pip-installed NVIDIA DLL dirs to PATH (cudnn, cublas, etc.)
+        self._add_nvidia_dll_paths()
+
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
 
@@ -625,9 +650,7 @@ class DepthEstimationSkill(TransformSkillBase):
             self.blend_mode = config["blend_mode"]
             _log(f"Blend mode updated: {self.blend_mode}", self._tag)
 
-    def get_output_mode(self) -> str:
-        """Use base64 for privacy transforms — avoids temp file cleanup issues."""
-        return "base64"
+
 
 
 if __name__ == "__main__":
