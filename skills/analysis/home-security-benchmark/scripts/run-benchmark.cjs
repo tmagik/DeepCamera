@@ -224,6 +224,8 @@ async function llmCall(messages, opts = {}) {
     const params = {
         messages,
         stream: true,
+        // Request token usage in streaming response (supported by OpenAI, some local servers)
+        stream_options: { include_usage: true },
         ...(model && { model }),
         ...(opts.temperature !== undefined && { temperature: opts.temperature }),
         ...maxTokensParam,
@@ -358,10 +360,24 @@ async function llmCall(messages, opts = {}) {
             content = reasoningContent;
         }
 
-        // Track token totals
-        results.tokenTotals.prompt += usage.prompt_tokens || 0;
-        results.tokenTotals.completion += usage.completion_tokens || 0;
-        results.tokenTotals.total += usage.total_tokens || 0;
+        // Build per-call token data:
+        // Prefer server-reported usage; fall back to chunk-counted completion tokens
+        const promptTokens = usage.prompt_tokens || 0;
+        const completionTokens = usage.completion_tokens || tokenCount; // tokenCount = chunks with content/reasoning
+        const totalTokens = usage.total_tokens || (promptTokens + completionTokens);
+        const callTokens = { prompt: promptTokens, completion: completionTokens, total: totalTokens };
+
+        // Track global token totals
+        results.tokenTotals.prompt += callTokens.prompt;
+        results.tokenTotals.completion += callTokens.completion;
+        results.tokenTotals.total += callTokens.total;
+
+        // Track per-test tokens (accumulated across multiple llmCall invocations within one test)
+        if (_currentTestTokens) {
+            _currentTestTokens.prompt += callTokens.prompt;
+            _currentTestTokens.completion += callTokens.completion;
+            _currentTestTokens.total += callTokens.total;
+        }
 
         // Capture model name from first response
         if (opts.vlm) {
@@ -370,7 +386,7 @@ async function llmCall(messages, opts = {}) {
             if (!results.model.name && model) results.model.name = model;
         }
 
-        return { content, toolCalls, usage, model };
+        return { content, toolCalls, usage: callTokens, model };
     } finally {
         clearTimeout(idleTimer);
     }
@@ -449,25 +465,33 @@ async function runSuites() {
     }
 }
 
+// ─── Per-test token accumulator (set by test(), read by llmCall) ──────────────
+let _currentTestTokens = null;
+
 async function test(name, fn) {
-    const testResult = { name, status: 'pass', timeMs: 0, detail: '', tokens: {} };
+    const testResult = { name, status: 'pass', timeMs: 0, detail: '', tokens: { prompt: 0, completion: 0, total: 0 } };
+    _currentTestTokens = { prompt: 0, completion: 0, total: 0 };
     const start = Date.now();
     try {
         const detail = await fn();
         testResult.timeMs = Date.now() - start;
         testResult.detail = detail || '';
+        testResult.tokens = { ..._currentTestTokens };
         currentSuite.passed++;
-        log(`  ✅ ${name} (${testResult.timeMs}ms)${detail ? ` — ${detail}` : ''}`);
+        const tokInfo = _currentTestTokens.total > 0 ? `, ${_currentTestTokens.total} tok` : '';
+        log(`  ✅ ${name} (${testResult.timeMs}ms${tokInfo})${detail ? ` — ${detail}` : ''}`);
     } catch (err) {
         testResult.timeMs = Date.now() - start;
         testResult.status = 'fail';
         testResult.detail = err.message;
+        testResult.tokens = { ..._currentTestTokens };
         currentSuite.failed++;
         log(`  ❌ ${name} (${testResult.timeMs}ms) — ${err.message}`);
     }
+    _currentTestTokens = null;
     currentSuite.timeMs += testResult.timeMs;
     currentSuite.tests.push(testResult);
-    emit({ event: 'test_result', suite: currentSuite.name, test: name, status: testResult.status, timeMs: testResult.timeMs, detail: testResult.detail.slice(0, 120) });
+    emit({ event: 'test_result', suite: currentSuite.name, test: name, status: testResult.status, timeMs: testResult.timeMs, detail: testResult.detail.slice(0, 120), tokens: testResult.tokens });
 }
 
 function skip(name, reason) {
