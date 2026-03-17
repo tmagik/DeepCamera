@@ -165,9 +165,10 @@ async function llmCall(messages, opts = {}) {
     }
 
     const model = opts.model || (opts.vlm ? VLM_MODEL : LLM_MODEL) || undefined;
-    // For JSON-expected tests, disable thinking (Qwen3.5 doesn't support /no_think)
-    // Method 1: Inject empty <think></think> assistant prefix to skip reasoning phase
-    // Method 2: chat_template_kwargs via extra_body (works if server supports it)
+    // For JSON-expected tests, use low temperature + top_p to encourage
+    // direct JSON output without extended reasoning.
+    // NOTE: Do NOT inject assistant prefill — Qwen3.5 rejects prefill
+    //       when enable_thinking is active (400 error).
     if (opts.expectJSON) {
         messages = [...messages];
         // Remove any leftover /no_think from messages
@@ -177,8 +178,6 @@ async function llmCall(messages, opts = {}) {
             }
             return m;
         });
-        // Inject empty think block as assistant prefix (most portable method)
-        messages.push({ role: 'assistant', content: '<think>\n</think>\n' });
     }
 
     // Build request params
@@ -188,9 +187,8 @@ async function llmCall(messages, opts = {}) {
         ...(model && { model }),
         ...(opts.temperature !== undefined && { temperature: opts.temperature }),
         ...(opts.maxTokens && { max_tokens: opts.maxTokens }),
-        // Qwen3.5 non-thinking mode recommended params
         ...(opts.expectJSON && opts.temperature === undefined && { temperature: 0.7 }),
-        ...(opts.expectJSON && { top_p: 0.8, presence_penalty: 1.5 }),
+        ...(opts.expectJSON && { top_p: 0.8 }),
         ...(opts.tools && { tools: opts.tools }),
     };
 
@@ -2021,10 +2019,11 @@ async function main() {
     const indexFile = path.join(RESULTS_DIR, 'index.json');
     let index = [];
     try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch { }
-    // Compute LLM vs VLM split
-    const vlmSuite = results.suites.find(s => s.name.includes('VLM'));
-    const vlmPassed = vlmSuite ? vlmSuite.tests.filter(t => t.status === 'pass').length : 0;
-    const vlmTotal = vlmSuite ? vlmSuite.tests.length : 0;
+    // Compute LLM vs VLM split (only count image analysis suites as VLM)
+    const isVlmImageSuite = (name) => name.includes('VLM Scene') || name.includes('📸');
+    const vlmSuites = results.suites.filter(s => isVlmImageSuite(s.name));
+    const vlmPassed = vlmSuites.reduce((n, s) => n + s.tests.filter(t => t.status === 'pass').length, 0);
+    const vlmTotal = vlmSuites.reduce((n, s) => n + s.tests.length, 0);
     const llmPassed = passed - vlmPassed;
     const llmTotal = total - vlmTotal;
 
