@@ -119,7 +119,12 @@ class _OnnxCoreMLModel:
         self._input_w = shape[3] if isinstance(shape[3], int) else 640
 
     def __call__(self, source, conf: float = 0.25, verbose: bool = True, **kwargs):
-        """Run inference on an image path or PIL Image."""
+        """Run inference on an image path or PIL Image.
+
+        All models use onnx-community HuggingFace format:
+          outputs[0] = logits  [1, 300, 80]  (raw, pre-sigmoid)
+          outputs[1] = pred_boxes [1, 300, 4] (cx, cy, w, h normalized 0..1)
+        """
         import numpy as np
         from PIL import Image
 
@@ -150,31 +155,36 @@ class _OnnxCoreMLModel:
 
         # Run inference
         outputs = self.session.run(None, {self._input_name: blob})
-        preds = outputs[0]  # shape: [1, num_detections, 6]
+        logits = outputs[0][0]      # [300, 80] raw class logits
+        pred_boxes = outputs[1][0]  # [300, 4]  cx, cy, w, h (normalized 0..1)
 
-        # Parse detections: [x1, y1, x2, y2, confidence, class_id]
+        # Sigmoid → class probabilities
+        probs = 1.0 / (1.0 + np.exp(-logits))
+
+        # Parse detections
         boxes = []
-        for det in preds[0]:
-            det_conf = float(det[4])
+        for i in range(len(pred_boxes)):
+            cls_id = int(np.argmax(probs[i]))
+            det_conf = float(probs[i][cls_id])
             if det_conf < conf:
                 continue
 
-            # Scale coordinates back to original image space
-            x1 = (float(det[0]) - pad_x) / scale
-            y1 = (float(det[1]) - pad_y) / scale
-            x2 = (float(det[2]) - pad_x) / scale
-            y2 = (float(det[3]) - pad_y) / scale
+            # cx,cy,w,h (normalized) → x1,y1,x2,y2 (original image pixels)
+            cx, cy, bw, bh = pred_boxes[i]
+            px_cx = cx * self._input_w
+            px_cy = cy * self._input_h
+            px_w = bw * self._input_w
+            px_h = bh * self._input_h
 
-            # Clip to image bounds
-            x1 = max(0, min(x1, orig_w))
-            y1 = max(0, min(y1, orig_h))
-            x2 = max(0, min(x2, orig_w))
-            y2 = max(0, min(y2, orig_h))
+            x1 = max(0, min((px_cx - px_w / 2 - pad_x) / scale, orig_w))
+            y1 = max(0, min((px_cy - px_h / 2 - pad_y) / scale, orig_h))
+            x2 = max(0, min((px_cx + px_w / 2 - pad_x) / scale, orig_w))
+            y2 = max(0, min((px_cy + px_h / 2 - pad_y) / scale, orig_h))
 
             boxes.append(_BoxResult(
                 xyxy=np.array([[x1, y1, x2, y2]]),
                 conf=np.array([det_conf]),
-                cls=np.array([int(det[5])]),
+                cls=np.array([cls_id]),
             ))
 
         return [_DetResult(boxes)]
