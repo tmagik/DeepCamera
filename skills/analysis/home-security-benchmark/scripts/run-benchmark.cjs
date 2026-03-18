@@ -558,7 +558,10 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
             },
         } : null;
 
-        const liveIndex = [{
+        // Preserve previous runs in index for comparison sidebar
+        let existingIndex = [];
+        try { existingIndex = JSON.parse(fs.readFileSync(indexFile, 'utf8')).filter(e => e.file !== '_live_progress.json'); } catch { }
+        const liveEntry = {
             file: '_live_progress.json',
             model: results.model.name || 'loading...',
             vlm: results.model.vlm || null,
@@ -572,8 +575,8 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
             timeMs: Date.now() - new Date(startedAt).getTime(),
             tokens: results.tokenTotals.total,
             perfSummary: livePerfSummary,
-        }];
-        fs.writeFileSync(indexFile, JSON.stringify(liveIndex, null, 2));
+        };
+        fs.writeFileSync(indexFile, JSON.stringify([...existingIndex, liveEntry], null, 2));
 
         // Regenerate report in live mode
         const reportScript = path.join(__dirname, 'generate-report.cjs');
