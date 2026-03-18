@@ -85,7 +85,8 @@ const VLM_URL = process.env.AEGIS_VLM_URL || getArg('vlm', '');
 const RESULTS_DIR = getArg('out', path.join(os.homedir(), '.aegis-ai', 'benchmarks'));
 const IS_SKILL_MODE = !!process.env.AEGIS_SKILL_ID;
 const NO_OPEN = args.includes('--no-open') || skillParams.noOpen || false;
-const TEST_MODE = skillParams.mode || 'full';
+// Auto-detect mode: if no VLM URL, default to 'llm' (skip VLM image-analysis tests)
+const TEST_MODE = skillParams.mode || (VLM_URL ? 'full' : 'llm');
 const IDLE_TIMEOUT_MS = 30000; // Streaming idle timeout — resets on each received token
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures');
 
@@ -155,6 +156,8 @@ const results = {
     suites: [],
     totals: { passed: 0, failed: 0, skipped: 0, total: 0, timeMs: 0 },
     tokenTotals: { prompt: 0, completion: 0, total: 0 },
+    perfTotals: { ttftMs: [], decodeTokensPerSec: [], prefillTokensPerSec: null, serverDecodeTokensPerSec: null },
+    resourceSamples: [],  // GPU/memory snapshots taken after each suite
 };
 
 async function llmCall(messages, opts = {}) {
@@ -165,9 +168,10 @@ async function llmCall(messages, opts = {}) {
     }
 
     const model = opts.model || (opts.vlm ? VLM_MODEL : LLM_MODEL) || undefined;
-    // For JSON-expected tests, disable thinking (Qwen3.5 doesn't support /no_think)
-    // Method 1: Inject empty <think></think> assistant prefix to skip reasoning phase
-    // Method 2: chat_template_kwargs via extra_body (works if server supports it)
+    // For JSON-expected tests, use low temperature + top_p to encourage
+    // direct JSON output without extended reasoning.
+    // NOTE: Do NOT inject assistant prefill — Qwen3.5 rejects prefill
+    //       when enable_thinking is active (400 error).
     if (opts.expectJSON) {
         messages = [...messages];
         // Remove any leftover /no_think from messages
@@ -177,20 +181,62 @@ async function llmCall(messages, opts = {}) {
             }
             return m;
         });
-        // Inject empty think block as assistant prefix (most portable method)
-        messages.push({ role: 'assistant', content: '<think>\n</think>\n' });
+        // Append JSON guidance to last user message for local models
+        const lastUser = messages.findLastIndex(m => m.role === 'user');
+        if (lastUser >= 0 && typeof messages[lastUser].content === 'string') {
+            messages[lastUser] = {
+                ...messages[lastUser],
+                content: messages[lastUser].content + '\n\nRespond with ONLY valid JSON, no explanation or markdown.',
+            };
+        }
     }
+
+    // Sanitize messages for llama-server compatibility:
+    // - Replace null content with empty string (llama-server rejects null)
+    // - Convert tool_calls assistant messages to plain text (llama-server
+    //   doesn't support OpenAI tool_calls format in conversation history)
+    // - Convert tool result messages to user messages
+    messages = messages.map(m => {
+        if (m.role === 'assistant' && m.tool_calls) {
+            // Convert tool call to text representation
+            const callDesc = m.tool_calls.map(tc => {
+                const argStr = typeof tc.function.arguments === 'string'
+                    ? tc.function.arguments
+                    : JSON.stringify(tc.function.arguments);
+                return `[Calling ${tc.function.name}(${argStr})]`;
+            }).join('\n');
+            return { role: 'assistant', content: callDesc };
+        }
+        if (m.role === 'tool') {
+            // Convert tool result to user message 
+            return { role: 'user', content: `[Tool result]: ${m.content}` };
+        }
+        return {
+            ...m,
+            ...(m.content === null && { content: '' }),
+        };
+    });
+
+    // Determine the correct max-tokens parameter name:
+    // - OpenAI cloud (GPT-5.4+): requires 'max_completion_tokens', rejects 'max_tokens'
+    // - Local llama-server: requires 'max_tokens', may not understand 'max_completion_tokens'
+    const isCloudApi = !opts.vlm && (LLM_API_TYPE === 'openai' || LLM_BASE_URL.includes('openai.com') || LLM_BASE_URL.includes('api.anthropic'));
+
+    // No max_tokens for any API — the streaming loop's 2000-token hard cap is the safety net.
+    // Sending max_tokens to thinking models (Qwen3.5) starves actual output since
+    // reasoning_content counts against the limit.
 
     // Build request params
     const params = {
         messages,
         stream: true,
+        // Request token usage in streaming response (only supported by cloud APIs;
+        // llama-server crashes with "Failed to parse input" when stream_options is present)
+        ...(isCloudApi && { stream_options: { include_usage: true } }),
         ...(model && { model }),
         ...(opts.temperature !== undefined && { temperature: opts.temperature }),
-        ...(opts.maxTokens && { max_completion_tokens: opts.maxTokens }),
-        // Qwen3.5 non-thinking mode recommended params
         ...(opts.expectJSON && opts.temperature === undefined && { temperature: 0.7 }),
-        ...(opts.expectJSON && { top_p: 0.8, presence_penalty: 1.5 }),
+        ...(opts.expectJSON && { top_p: 0.8 }),
         ...(opts.tools && { tools: opts.tools }),
     };
 
@@ -228,6 +274,7 @@ async function llmCall(messages, opts = {}) {
         }
     }
 
+    const callStartTime = Date.now();
     try {
         const stream = await client.chat.completions.create(params, {
             signal: controller.signal,
@@ -240,6 +287,7 @@ async function llmCall(messages, opts = {}) {
         let usage = {};
         let tokenCount = 0;
         let tokenBuffer = '';
+        let firstTokenTime = null;  // For TTFT measurement
 
         for await (const chunk of stream) {
             resetIdle();
@@ -251,6 +299,8 @@ async function llmCall(messages, opts = {}) {
             if (delta?.reasoning_content) reasoningContent += delta.reasoning_content;
             if (delta?.content || delta?.reasoning_content) {
                 tokenCount++;
+                // Capture TTFT on first content/reasoning token
+                if (!firstTokenTime) firstTokenTime = Date.now();
                 // Buffer and log tokens — tag with field source
                 const isContent = !!delta?.content;
                 const tok = delta?.content || delta?.reasoning_content || '';
@@ -266,10 +316,10 @@ async function llmCall(messages, opts = {}) {
                 }
 
                 // Smart early abort for JSON-expected tests:
-                // If the model is producing reasoning_content (thinking) for a JSON test,
-                // abort after 100 reasoning tokens — it should output JSON directly.
-                if (opts.expectJSON && !isContent && tokenCount > 100) {
-                    log(`    ⚠ Aborting: ${tokenCount} reasoning tokens for JSON test — model is thinking instead of outputting JSON`);
+                // Allow thinking models (Qwen3.5) up to 500 reasoning tokens before aborting.
+                // They legitimately need to reason before outputting JSON.
+                if (opts.expectJSON && !isContent && tokenCount > 500) {
+                    log(`    ⚠ Aborting: ${tokenCount} reasoning tokens for JSON test — model is thinking too long`);
                     controller.abort();
                     break;
                 }
@@ -304,7 +354,12 @@ async function llmCall(messages, opts = {}) {
                         toolCalls[idx] = { id: tc.id, type: tc.type || 'function', function: { name: '', arguments: '' } };
                     }
                     if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
-                    if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+                    if (tc.function?.arguments) {
+                        const chunk = typeof tc.function.arguments === 'string'
+                            ? tc.function.arguments
+                            : JSON.stringify(tc.function.arguments);
+                        toolCalls[idx].function.arguments += chunk;
+                    }
                 }
             }
 
@@ -316,14 +371,65 @@ async function llmCall(messages, opts = {}) {
 
         // If the model only produced reasoning_content (thinking) with no content,
         // use the reasoning output as the response content for evaluation purposes.
+        // Try to extract JSON from reasoning if this was a JSON-expected call.
         if (!content && reasoningContent) {
-            content = reasoningContent;
+            // Try to find JSON embedded in the reasoning output
+            try {
+                const jsonMatch = reasoningContent.match(/[{\[][\s\S]*[}\]]/); 
+                if (jsonMatch) {
+                    content = jsonMatch[0];
+                } else {
+                    content = reasoningContent;
+                }
+            } catch {
+                content = reasoningContent;
+            }
         }
 
-        // Track token totals
-        results.tokenTotals.prompt += usage.prompt_tokens || 0;
-        results.tokenTotals.completion += usage.completion_tokens || 0;
-        results.tokenTotals.total += usage.total_tokens || 0;
+        // Build per-call token data:
+        // Prefer server-reported usage; fall back to chunk-counted completion tokens
+        const promptTokens = usage.prompt_tokens || 0;
+        const completionTokens = usage.completion_tokens || tokenCount; // tokenCount = chunks with content/reasoning
+        const totalTokens = usage.total_tokens || (promptTokens + completionTokens);
+        const callTokens = { prompt: promptTokens, completion: completionTokens, total: totalTokens };
+
+        // ─── Performance metrics ───
+        const callEndTime = Date.now();
+        const totalElapsedMs = callEndTime - callStartTime;
+        const ttftMs = firstTokenTime ? (firstTokenTime - callStartTime) : null;
+        // Decode throughput: tokens generated / time spent generating (after first token)
+        const decodeMs = firstTokenTime ? (callEndTime - firstTokenTime) : 0;
+        const decodeTokensPerSec = (decodeMs > 0 && tokenCount > 1)
+            ? ((tokenCount - 1) / (decodeMs / 1000))  // -1 because first token is the TTFT boundary
+            : null;
+
+        const callPerf = {
+            ttftMs,
+            decodeTokensPerSec: decodeTokensPerSec ? parseFloat(decodeTokensPerSec.toFixed(1)) : null,
+            totalElapsedMs,
+        };
+
+        // Track global token totals
+        results.tokenTotals.prompt += callTokens.prompt;
+        results.tokenTotals.completion += callTokens.completion;
+        results.tokenTotals.total += callTokens.total;
+
+        // Track per-test tokens (accumulated across multiple llmCall invocations within one test)
+        if (_currentTestTokens) {
+            _currentTestTokens.prompt += callTokens.prompt;
+            _currentTestTokens.completion += callTokens.completion;
+            _currentTestTokens.total += callTokens.total;
+        }
+
+        // Track per-test perf (accumulated across multiple llmCall invocations within one test)
+        if (_currentTestPerf) {
+            if (ttftMs !== null) _currentTestPerf.ttftMs.push(ttftMs);
+            if (decodeTokensPerSec !== null) _currentTestPerf.decodeTokensPerSec.push(decodeTokensPerSec);
+        }
+
+        // Track global perf totals
+        if (ttftMs !== null) results.perfTotals.ttftMs.push(ttftMs);
+        if (decodeTokensPerSec !== null) results.perfTotals.decodeTokensPerSec.push(decodeTokensPerSec);
 
         // Capture model name from first response
         if (opts.vlm) {
@@ -332,7 +438,7 @@ async function llmCall(messages, opts = {}) {
             if (!results.model.name && model) results.model.name = model;
         }
 
-        return { content, toolCalls, usage, model };
+        return { content, toolCalls, usage: callTokens, perf: callPerf, model };
     } finally {
         clearTimeout(idleTimer);
     }
@@ -340,7 +446,12 @@ async function llmCall(messages, opts = {}) {
 }
 
 function stripThink(text) {
-    return text.replace(/<think>[\s\S]*?<\/think>\s*/gi, '').trim();
+    // Strip standard <think>...</think> tags
+    let cleaned = text.replace(/<think>[\s\S]*?<\/think>\s*/gi, '').trim();
+    // Strip Qwen3.5 'Thinking Process:' blocks (outputs plain text reasoning
+    // instead of <think> tags when enable_thinking is active)
+    cleaned = cleaned.replace(/^Thinking Process[:\s]*[\s\S]*?(?=\n\s*[{\[]|\n```|$)/i, '').trim();
+    return cleaned;
 }
 
 function parseJSON(text) {
@@ -351,7 +462,7 @@ function parseJSON(text) {
         jsonStr = codeBlock[1];
     } else {
         // Find first { or [ and extract balanced JSON
-        const startIdx = cleaned.search(/[{[]/);
+        const startIdx = cleaned.search(/[{\[]/); 
         if (startIdx >= 0) {
             const opener = cleaned[startIdx];
             const closer = opener === '{' ? '}' : ']';
@@ -370,15 +481,198 @@ function parseJSON(text) {
             }
         }
     }
-    return JSON.parse(jsonStr.trim());
+    // Clean common local model artifacts before parsing:
+    // - Replace literal "..." or "…" placeholders in arrays/values
+    // - Replace <any placeholder text> tags (model echoes prompt templates)
+    jsonStr = jsonStr
+        .replace(/,\s*\.{3,}\s*(?=[\]},])/g, '')   // trailing ..., before ] } or ,
+        .replace(/\.{3,}/g, '"..."')                 // standalone ... → string
+        .replace(/…/g, '"..."')                       // ellipsis char
+        .replace(/<[^>]+>/g, '"placeholder"')         // <any text> → "placeholder" (multi-word)
+        .replace(/,\s*([}\]])/g, '$1');                // trailing commas
+    try {
+        return JSON.parse(jsonStr.trim());
+    } catch (firstErr) {
+        // Aggressive retry: strip all non-JSON artifacts
+        const aggressive = jsonStr
+            .replace(/"placeholder"(\s*"placeholder")*/g, '"placeholder"')  // collapse repeated placeholders
+            .replace(/\bplaceholder\b/g, '""')        // placeholder → empty string
+            .replace(/,\s*([}\]])/g, '$1');            // re-clean trailing commas
+        return JSON.parse(aggressive.trim());
+    }
 }
 
 function assert(condition, msg) {
     if (!condition) throw new Error(msg || 'Assertion failed');
 }
 
+// ─── Resource Metrics (GPU/MPS + Memory) ─────────────────────────────────────
+
+/**
+ * Sample GPU (Apple Silicon MPS) utilization and system memory.
+ * Uses `ioreg` for GPU stats (no sudo needed).
+ */
+function sampleResourceMetrics() {
+    const os = require('os');
+    const sample = {
+        timestamp: new Date().toISOString(),
+        sys: {
+            totalGB: parseFloat((os.totalmem() / 1073741824).toFixed(1)),
+            freeGB: parseFloat((os.freemem() / 1073741824).toFixed(1)),
+            usedGB: parseFloat(((os.totalmem() - os.freemem()) / 1073741824).toFixed(1)),
+        },
+        process: {
+            rssMB: parseFloat((process.memoryUsage().rss / 1048576).toFixed(0)),
+        },
+        gpu: null,
+    };
+
+    // Apple Silicon GPU via ioreg (macOS only)
+    if (process.platform === 'darwin') {
+        try {
+            const out = execSync('ioreg -r -c AGXAccelerator 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
+            const m = (key) => { const r = new RegExp('"' + key + '"=(\\d+)'); const match = out.match(r); return match ? parseInt(match[1]) : null; };
+            const deviceUtil = m('Device Utilization %');
+            const rendererUtil = m('Renderer Utilization %');
+            const tilerUtil = m('Tiler Utilization %');
+            const memUsed = m('In use system memory');
+            const memAlloc = m('Alloc system memory');
+            if (deviceUtil !== null) {
+                sample.gpu = {
+                    util: deviceUtil,
+                    renderer: rendererUtil,
+                    tiler: tilerUtil,
+                    memUsedGB: memUsed ? parseFloat((memUsed / 1073741824).toFixed(1)) : null,
+                    memAllocGB: memAlloc ? parseFloat((memAlloc / 1073741824).toFixed(1)) : null,
+                };
+            }
+        } catch { /* ioreg not available or timed out */ }
+    }
+
+    return sample;
+}
+
+// ─── Live progress: intermediate saves + report regeneration ────────────────
+let _liveReportOpened = false;
+let _runStartedAt = null;     // Set when runSuites() begins
+let _currentTestName = null;  // Set during test execution for live banner
+let _currentSuiteIndex = 0;   // Current suite index for live progress
+let _totalSuites = 0;         // Total number of suites
+
+/**
+ * Save the current (in-progress) results to disk and regenerate the live report.
+ * Called after each test completes so the browser auto-refreshes with updated data.
+ */
+function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName, currentTest) {
+    try {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+
+        // Save current results as a live file (will be overwritten each time)
+        const liveFile = path.join(RESULTS_DIR, '_live_progress.json');
+        // Include the in-progress suite so Quality/Vision tabs can render partial data
+        const liveSuites = [...results.suites];
+        if (currentSuite && currentSuite.tests.length > 0 && !results.suites.includes(currentSuite)) {
+            liveSuites.push(currentSuite);
+        }
+        const liveResults = {
+            ...results,
+            suites: liveSuites,
+            _live: true,
+            _progress: { suitesCompleted, totalSuites, startedAt, currentTest: currentTest || null },
+        };
+        fs.writeFileSync(liveFile, JSON.stringify(liveResults, null, 2));
+
+        // Build a temporary index with just the live file
+        const indexFile = path.join(RESULTS_DIR, 'index.json');
+
+        // Compute live performance summary from accumulated data
+        const ttftArr = [...results.perfTotals.ttftMs];
+        const decArr = [...results.perfTotals.decodeTokensPerSec];
+        const livePerfSummary = (ttftArr.length > 0 || decArr.length > 0) ? {
+            ttft: ttftArr.length > 0 ? {
+                avgMs: Math.round(ttftArr.reduce((a, b) => a + b, 0) / ttftArr.length),
+                p50Ms: [...ttftArr].sort((a, b) => a - b)[Math.floor(ttftArr.length * 0.5)],
+                p95Ms: [...ttftArr].sort((a, b) => a - b)[Math.floor(ttftArr.length * 0.95)],
+                samples: ttftArr.length,
+            } : null,
+            decode: decArr.length > 0 ? {
+                avgTokensPerSec: parseFloat((decArr.reduce((a, b) => a + b, 0) / decArr.length).toFixed(1)),
+                samples: decArr.length,
+            } : null,
+            server: {
+                prefillTokensPerSec: results.perfTotals.prefillTokensPerSec,
+                decodeTokensPerSec: results.perfTotals.serverDecodeTokensPerSec,
+            },
+            resource: results.resourceSamples.length > 0 ? results.resourceSamples[results.resourceSamples.length - 1] : null,
+        } : null;
+
+        // Preserve previous runs in index for comparison sidebar
+        let existingIndex = [];
+        try { existingIndex = JSON.parse(fs.readFileSync(indexFile, 'utf8')).filter(e => e.file !== '_live_progress.json'); } catch { }
+        const liveEntry = {
+            file: '_live_progress.json',
+            model: results.model.name || 'loading...',
+            vlm: results.model.vlm || null,
+            timestamp: results.timestamp,
+            passed: results.totals.passed,
+            failed: results.totals.failed,
+            total: results.totals.total,
+            llmPassed: results.totals.passed, // Simplified for live view
+            llmTotal: results.totals.total,
+            vlmPassed: 0, vlmTotal: 0,
+            timeMs: Date.now() - new Date(startedAt).getTime(),
+            tokens: results.tokenTotals.total,
+            perfSummary: livePerfSummary,
+        };
+        fs.writeFileSync(indexFile, JSON.stringify([...existingIndex, liveEntry], null, 2));
+
+        // Regenerate report in live mode
+        const reportScript = path.join(__dirname, 'generate-report.cjs');
+        // Clear require cache to pick up any code changes
+        delete require.cache[require.resolve(reportScript)];
+        const { generateReport } = require(reportScript);
+        const testsCompleted = liveSuites.reduce((n, s) => n + s.tests.length, 0);
+        const testsTotal = liveSuites.reduce((n, s) => n + s.tests.length, 0) + (currentTest ? 0 : 0);
+        const reportPath = generateReport(RESULTS_DIR, {
+            liveMode: true,
+            liveStatus: {
+                suitesCompleted,
+                totalSuites,
+                currentSuite: currentSuite?.name || nextSuiteName || 'Finishing...',
+                currentTest: currentTest || null,
+                testsCompleted,
+                startedAt,
+            },
+        });
+
+        // Open browser on first save (so user sees live progress from the start)
+        if (!_liveReportOpened && !NO_OPEN && reportPath) {
+            if (IS_SKILL_MODE) {
+                // Ask Aegis to open in its embedded browser window
+                emit({ event: 'open_report', reportPath });
+                log('  📊 Requested Aegis to open live report');
+            } else {
+                // Standalone: open in system browser
+                try {
+                    const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+                    execSync(`${openCmd} "${reportPath}"`, { stdio: 'ignore' });
+                    log('  📊 Live report opened in browser (auto-refreshes every 5s)');
+                } catch { }
+            }
+            _liveReportOpened = true;
+        }
+    } catch (err) {
+        // Non-fatal — live progress is a nice-to-have
+        log(`  ⚠️  Live progress update failed: ${err.message}`);
+    }
+}
+
 async function runSuites() {
-    for (const s of suites) {
+    _runStartedAt = new Date().toISOString();
+    _totalSuites = suites.length;
+    for (let si = 0; si < suites.length; si++) {
+        const s = suites[si];
+        _currentSuiteIndex = si;
         currentSuite = { name: s.name, tests: [], passed: 0, failed: 0, skipped: 0, timeMs: 0 };
         log(`\n${'─'.repeat(60)}`);
         log(`  ${s.name}`);
@@ -394,28 +688,68 @@ async function runSuites() {
         results.totals.total += currentSuite.tests.length;
 
         emit({ event: 'suite_end', suite: s.name, passed: currentSuite.passed, failed: currentSuite.failed, skipped: currentSuite.skipped, timeMs: currentSuite.timeMs });
+
+        // Sample resource metrics (GPU + memory) after each suite
+        const resourceSample = sampleResourceMetrics();
+        resourceSample.suite = s.name;
+        results.resourceSamples.push(resourceSample);
+
+        // Scrape server metrics after each suite so live perf cards update
+        await scrapeServerMetrics();
+
+        // Live progress: save after suite (also saved per-test, but suite boundary is a clean checkpoint)
+        saveLiveProgress(_runStartedAt, si + 1, suites.length, si + 1 < suites.length ? suites[si + 1]?.name : null);
     }
 }
 
+// ─── Per-test token + perf accumulators (set by test(), read by llmCall) ──────
+let _currentTestTokens = null;
+let _currentTestPerf = null;
+let _vlmTestMeta = null; // VLM fixture metadata (set during VLM tests, read after test() completes)
+
 async function test(name, fn) {
-    const testResult = { name, status: 'pass', timeMs: 0, detail: '', tokens: {} };
+    const testResult = { name, status: 'pass', timeMs: 0, detail: '', tokens: { prompt: 0, completion: 0, total: 0 }, perf: {} };
+    _currentTestTokens = { prompt: 0, completion: 0, total: 0 };
+    _currentTestPerf = { ttftMs: [], decodeTokensPerSec: [] };
     const start = Date.now();
     try {
         const detail = await fn();
         testResult.timeMs = Date.now() - start;
         testResult.detail = detail || '';
+        testResult.tokens = { ..._currentTestTokens };
+        // Compute aggregate perf for this test (may span multiple llmCall invocations)
+        testResult.perf = {
+            ttftMs: _currentTestPerf.ttftMs.length > 0 ? Math.round(_currentTestPerf.ttftMs.reduce((a, b) => a + b, 0) / _currentTestPerf.ttftMs.length) : null,
+            decodeTokensPerSec: _currentTestPerf.decodeTokensPerSec.length > 0 ? parseFloat((_currentTestPerf.decodeTokensPerSec.reduce((a, b) => a + b, 0) / _currentTestPerf.decodeTokensPerSec.length).toFixed(1)) : null,
+        };
         currentSuite.passed++;
-        log(`  ✅ ${name} (${testResult.timeMs}ms)${detail ? ` — ${detail}` : ''}`);
+        const tokInfo = _currentTestTokens.total > 0 ? `, ${_currentTestTokens.total} tok` : '';
+        const perfInfo = testResult.perf.ttftMs !== null ? `, TTFT ${testResult.perf.ttftMs}ms` : '';
+        const tpsInfo = testResult.perf.decodeTokensPerSec !== null ? `, ${testResult.perf.decodeTokensPerSec} tok/s` : '';
+        log(`  ✅ ${name} (${testResult.timeMs}ms${tokInfo}${perfInfo}${tpsInfo})${detail ? ` — ${detail}` : ''}`);
     } catch (err) {
         testResult.timeMs = Date.now() - start;
         testResult.status = 'fail';
         testResult.detail = err.message;
+        testResult.tokens = { ..._currentTestTokens };
+        testResult.perf = {
+            ttftMs: _currentTestPerf.ttftMs.length > 0 ? Math.round(_currentTestPerf.ttftMs.reduce((a, b) => a + b, 0) / _currentTestPerf.ttftMs.length) : null,
+            decodeTokensPerSec: _currentTestPerf.decodeTokensPerSec.length > 0 ? parseFloat((_currentTestPerf.decodeTokensPerSec.reduce((a, b) => a + b, 0) / _currentTestPerf.decodeTokensPerSec.length).toFixed(1)) : null,
+        };
         currentSuite.failed++;
         log(`  ❌ ${name} (${testResult.timeMs}ms) — ${err.message}`);
     }
+    _currentTestTokens = null;
+    _currentTestPerf = null;
     currentSuite.timeMs += testResult.timeMs;
     currentSuite.tests.push(testResult);
-    emit({ event: 'test_result', suite: currentSuite.name, test: name, status: testResult.status, timeMs: testResult.timeMs, detail: testResult.detail.slice(0, 120) });
+    emit({ event: 'test_result', suite: currentSuite.name, test: name, status: testResult.status, timeMs: testResult.timeMs, detail: testResult.detail.slice(0, 120), tokens: testResult.tokens, perf: testResult.perf });
+
+    // Live progress: save after each test for real-time updates in commander center
+    if (_runStartedAt) {
+        _currentTestName = null; // Test just completed
+        saveLiveProgress(_runStartedAt, _currentSuiteIndex, _totalSuites, null, name);
+    }
 }
 
 function skip(name, reason) {
@@ -444,11 +778,7 @@ ${userMessage}
 3. Always keep the last 2 user messages (most recent context)
 4. Keep system messages (they contain tool results)
 
-## Response Format
-Respond with ONLY a valid JSON object, no other text:
-{"keep": [<actual index numbers from the list above>], "summary": "<summary of what was dropped>"}
-
-Example: if keeping messages at indices 0, 18, 22 → {"keep": [0, 18, 22], "summary": "Removed 4 duplicate 'what happened today' questions"}
+Respond with ONLY valid JSON: {"keep": [0, 18, 22], "summary": "Removed 4 duplicate questions"}
 If nothing should be dropped, keep ALL indices and set summary to "".`;
 }
 
@@ -1879,18 +2209,37 @@ suite('📸 VLM Scene Analysis', async () => {
             const framePath = path.join(FIXTURES_DIR, 'frames', t.file);
             if (!fs.existsSync(framePath)) { skip(t.name, `File missing: ${t.file}`); return; }
             const desc = await vlmAnalyze(framePath, t.prompt);
-            if (t.expect === null) {
-                // Just check we got a meaningful response
-                assert(desc.length > 20, `Response too short: ${desc.length} chars`);
-                return `${desc.length} chars ✓`;
-            }
-            const lower = desc.toLowerCase();
-            const matched = t.expect.some(term => lower.includes(term));
-            assert(matched,
-                `Expected one of [${t.expect.slice(0, 4).join(', ')}...] in: "${desc.slice(0, 80)}"`);
-            const hits = t.expect.filter(term => lower.includes(term));
-            return `${desc.length} chars, matched: ${hits.join(', ')} ✓`;
+
+            // Save fixture filename + VLM response for Vision tab in report
+            const lastTest = currentSuite.tests.length > 0 ? null : undefined; // will be set after push
+            // Attach after test() pushes — use a post-hook via the return
+            const result = (() => {
+                if (t.expect === null) {
+                    assert(desc.length > 20, `Response too short: ${desc.length} chars`);
+                    return `${desc.length} chars ✓`;
+                }
+                const lower = desc.toLowerCase();
+                const matched = t.expect.some(term => lower.includes(term));
+                assert(matched,
+                    `Expected one of [${t.expect.slice(0, 4).join(', ')}...] in: "${desc.slice(0, 80)}"`);
+                const hits = t.expect.filter(term => lower.includes(term));
+                return `${desc.length} chars, matched: ${hits.join(', ')} ✓`;
+            })();
+
+            // Stash fixture + response on the test result (test() pushes to currentSuite.tests)
+            // We set it as a closure-accessible value; the test() function reads the return value.
+            // After test() completes, we patch the last test entry with VLM metadata.
+            _vlmTestMeta = { fixture: t.file, vlmResponse: desc.slice(0, 300), prompt: t.prompt };
+            return result;
         });
+        // Patch the last pushed test with VLM metadata (fixture filename + response preview)
+        if (_vlmTestMeta && currentSuite.tests.length > 0) {
+            const lastTest = currentSuite.tests[currentSuite.tests.length - 1];
+            lastTest.fixture = _vlmTestMeta.fixture;
+            lastTest.vlmResponse = _vlmTestMeta.vlmResponse;
+            lastTest.vlmPrompt = _vlmTestMeta.prompt;
+            _vlmTestMeta = null;
+        }
     }
 });
 
@@ -1914,6 +2263,52 @@ function collectSystemInfo() {
             heapTotal: (mem.heapTotal / 1048576).toFixed(1),
         },
     };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERVER METRICS SCRAPER (llama-server Prometheus /metrics endpoint)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Scrape llama-server /metrics endpoint for server-side performance stats.
+ * Requires llama-server to be launched with --metrics flag.
+ * Extracts: prompt_tokens_seconds (prefill tok/s), predicted_tokens_seconds (decode tok/s)
+ */
+async function scrapeServerMetrics() {
+    // Try LLM server first, then VLM server
+    const ports = [
+        { name: 'LLM', url: LLM_URL || GATEWAY_URL },
+        ...(VLM_URL ? [{ name: 'VLM', url: VLM_URL }] : []),
+    ];
+
+    for (const { name, url } of ports) {
+        try {
+            const base = url.replace(/\/v1\/?$/, '');
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            const res = await fetch(`${base}/metrics`, { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (!res.ok) continue;
+            const text = await res.text();
+
+            // Parse Prometheus text format for our metrics
+            const prefillMatch = text.match(/llamacpp:prompt_tokens_seconds\s+([\d.]+)/);
+            const decodeMatch = text.match(/llamacpp:predicted_tokens_seconds\s+([\d.]+)/);
+
+            if (prefillMatch || decodeMatch) {
+                const prefill = prefillMatch ? parseFloat(parseFloat(prefillMatch[1]).toFixed(1)) : null;
+                const decode = decodeMatch ? parseFloat(parseFloat(decodeMatch[1]).toFixed(1)) : null;
+                results.perfTotals.prefillTokensPerSec = prefill;
+                results.perfTotals.serverDecodeTokensPerSec = decode;
+                log(`  📊 ${name} server metrics: prefill ${prefill || '?'} tok/s, decode ${decode || '?'} tok/s`);
+                return; // Got metrics from at least one server
+            }
+        } catch (_) {
+            // /metrics not available — server not started with --metrics flag
+        }
+    }
+    log('  ℹ️  Server /metrics not available (start with --metrics for server-side stats)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1942,7 +2337,6 @@ async function main() {
         const ping = await llmClient.chat.completions.create({
             ...(LLM_MODEL && { model: LLM_MODEL }),
             messages: [{ role: 'user', content: 'ping' }],
-            max_completion_tokens: 5,
         });
         results.model.name = ping.model || 'unknown';
         log(`  Model:    ${results.model.name}`);
@@ -1951,7 +2345,7 @@ async function main() {
         log(`     Base URL: ${llmBaseUrl}`);
         log('     Check that the LLM server is running.\n');
         emit({ event: 'error', message: `Cannot reach LLM endpoint: ${err.message}` });
-        process.exit(1);
+        process.exit(IS_SKILL_MODE ? 0 : 1);
     }
 
     // Collect system info
@@ -1991,14 +2385,44 @@ async function main() {
         heapUsed: (postMem.heapUsed / 1048576).toFixed(1),
     };
 
+    // Scrape llama-server /metrics for server-side prefill/decode stats
+    await scrapeServerMetrics();
+
     // Summary
     const { passed, failed, skipped, total, timeMs } = results.totals;
     const tokPerSec = timeMs > 0 ? ((results.tokenTotals.total / (timeMs / 1000)).toFixed(1)) : '?';
+
+    // Compute aggregate perf stats
+    const ttftArr = results.perfTotals.ttftMs;
+    const avgTtft = ttftArr.length > 0 ? Math.round(ttftArr.reduce((a, b) => a + b, 0) / ttftArr.length) : null;
+    const p50Ttft = ttftArr.length > 0 ? ttftArr.sort((a, b) => a - b)[Math.floor(ttftArr.length * 0.5)] : null;
+    const p95Ttft = ttftArr.length > 0 ? ttftArr.sort((a, b) => a - b)[Math.floor(ttftArr.length * 0.95)] : null;
+    const decArr = results.perfTotals.decodeTokensPerSec;
+    const avgDecode = decArr.length > 0 ? parseFloat((decArr.reduce((a, b) => a + b, 0) / decArr.length).toFixed(1)) : null;
+
+    // Store computed aggregates
+    results.perfSummary = {
+        ttft: { avgMs: avgTtft, p50Ms: p50Ttft, p95Ms: p95Ttft, samples: ttftArr.length },
+        decode: { avgTokensPerSec: avgDecode, samples: decArr.length },
+        server: {
+            prefillTokensPerSec: results.perfTotals.prefillTokensPerSec,
+            decodeTokensPerSec: results.perfTotals.serverDecodeTokensPerSec,
+        },
+    };
 
     log(`\n${'═'.repeat(66)}`);
     log(`  RESULTS: ${passed}/${total} passed, ${failed} failed, ${skipped} skipped (${(timeMs / 1000).toFixed(1)}s)`);
     log(`  TOKENS:  ${results.tokenTotals.prompt} prompt + ${results.tokenTotals.completion} completion = ${results.tokenTotals.total} total (${tokPerSec} tok/s)`);
     log(`  MODEL:   ${results.model.name}${results.model.vlm ? ' | VLM: ' + results.model.vlm : ''}`);
+    if (avgTtft !== null) {
+        log(`  TTFT:    avg ${avgTtft}ms | p50 ${p50Ttft}ms | p95 ${p95Ttft}ms (${ttftArr.length} samples)`);
+    }
+    if (avgDecode !== null) {
+        log(`  DECODE:  ${avgDecode} tok/s avg (${decArr.length} samples)`);
+    }
+    if (results.perfTotals.prefillTokensPerSec !== null) {
+        log(`  SERVER:  prefill ${results.perfTotals.prefillTokensPerSec} tok/s | decode ${results.perfTotals.serverDecodeTokensPerSec} tok/s (from /metrics)`);
+    }
     log(`${'═'.repeat(66)}`);
 
     if (failed > 0) {
@@ -2012,20 +2436,23 @@ async function main() {
 
     // Save results
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    // Clean up live progress file (replaced by final results)
+    try { fs.unlinkSync(path.join(RESULTS_DIR, '_live_progress.json')); } catch { }
     const modelSlug = (results.model.name || 'unknown').replace(/[^a-zA-Z0-9_.-]/g, '_');
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const resultFile = path.join(RESULTS_DIR, `${modelSlug}_${ts}.json`);
     fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
     log(`\n  Results saved: ${resultFile}`);
 
-    // Update index
+    // Update index (filter out any live progress entries)
     const indexFile = path.join(RESULTS_DIR, 'index.json');
     let index = [];
-    try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch { }
-    // Compute LLM vs VLM split
-    const vlmSuite = results.suites.find(s => s.name.includes('VLM'));
-    const vlmPassed = vlmSuite ? vlmSuite.tests.filter(t => t.status === 'pass').length : 0;
-    const vlmTotal = vlmSuite ? vlmSuite.tests.length : 0;
+    try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')).filter(e => e.file !== '_live_progress.json'); } catch { }
+    // Compute LLM vs VLM split (only count image analysis suites as VLM)
+    const isVlmImageSuite = (name) => name.includes('VLM Scene') || name.includes('📸');
+    const vlmSuites = results.suites.filter(s => isVlmImageSuite(s.name));
+    const vlmPassed = vlmSuites.reduce((n, s) => n + s.tests.filter(t => t.status === 'pass').length, 0);
+    const vlmTotal = vlmSuites.reduce((n, s) => n + s.tests.length, 0);
     const llmPassed = passed - vlmPassed;
     const llmTotal = total - vlmTotal;
 
@@ -2039,19 +2466,26 @@ async function main() {
         vlmPassed, vlmTotal,
         timeMs,
         tokens: results.tokenTotals.total,
+        perfSummary: {
+            ...(results.perfSummary || {}),
+            resource: results.resourceSamples?.length > 0 ? results.resourceSamples[results.resourceSamples.length - 1] : null,
+        },
     });
     fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
 
-    // Always generate report (skip only on explicit --no-open with no --report flag)
+    // Always generate final report (without live mode) 
     let reportPath = null;
     log('\n  Generating HTML report...');
     try {
         const reportScript = path.join(__dirname, 'generate-report.cjs');
+        // Clear require cache to get latest version  
+        delete require.cache[require.resolve(reportScript)];
         reportPath = require(reportScript).generateReport(RESULTS_DIR);
         log(`  ✅ Report: ${reportPath}`);
 
         // Auto-open in browser — only in standalone mode (Aegis handles its own opening)
-        if (!NO_OPEN && !IS_SKILL_MODE && reportPath) {
+        // Skip if live mode already opened the browser earlier
+        if (!_liveReportOpened && !NO_OPEN && !IS_SKILL_MODE && reportPath) {
             try {
                 const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
                 execSync(`${openCmd} "${reportPath}"`, { stdio: 'ignore' });
@@ -2077,7 +2511,10 @@ async function main() {
     });
 
     log('');
-    process.exit(failed > 0 ? 1 : 0);
+    // When running as Aegis skill, always exit 0 — test results are reported
+    // via JSON events (pass/fail is a result, not an error). Exit 1 only for
+    // standalone CLI usage where CI/CD pipelines expect non-zero on failures.
+    process.exit(IS_SKILL_MODE ? 0 : (failed > 0 ? 1 : 0));
 }
 
 // Run when executed directly — supports both plain Node and Electron spawn.
@@ -2090,7 +2527,7 @@ if (isDirectRun) {
     main().catch(err => {
         log(`Fatal: ${err.message}`);
         emit({ event: 'error', message: err.message });
-        process.exit(1);
+        process.exit(IS_SKILL_MODE ? 0 : 1);
     });
 }
 
