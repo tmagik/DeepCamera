@@ -560,12 +560,19 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
         });
 
         // Open browser on first save (so user sees live progress from the start)
-        if (!_liveReportOpened && !NO_OPEN && !IS_SKILL_MODE && reportPath) {
-            try {
-                const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-                execSync(`${openCmd} "${reportPath}"`, { stdio: 'ignore' });
-                log('  📊 Live report opened in browser (auto-refreshes every 5s)');
-            } catch { }
+        if (!_liveReportOpened && !NO_OPEN && reportPath) {
+            if (IS_SKILL_MODE) {
+                // Ask Aegis to open in its embedded browser window
+                emit({ event: 'open_report', reportPath });
+                log('  📊 Requested Aegis to open live report');
+            } else {
+                // Standalone: open in system browser
+                try {
+                    const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+                    execSync(`${openCmd} "${reportPath}"`, { stdio: 'ignore' });
+                    log('  📊 Live report opened in browser (auto-refreshes every 5s)');
+                } catch { }
+            }
             _liveReportOpened = true;
         }
     } catch (err) {
