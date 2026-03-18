@@ -638,6 +638,9 @@ async function runSuites() {
 
         emit({ event: 'suite_end', suite: s.name, passed: currentSuite.passed, failed: currentSuite.failed, skipped: currentSuite.skipped, timeMs: currentSuite.timeMs });
 
+        // Scrape server metrics after each suite so live perf cards update
+        await scrapeServerMetrics();
+
         // Live progress: save after suite (also saved per-test, but suite boundary is a clean checkpoint)
         saveLiveProgress(_runStartedAt, si + 1, suites.length, si + 1 < suites.length ? suites[si + 1]?.name : null);
     }
