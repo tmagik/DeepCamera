@@ -507,21 +507,31 @@ function assert(condition, msg) {
 
 // ─── Live progress: intermediate saves + report regeneration ────────────────
 let _liveReportOpened = false;
+let _runStartedAt = null;     // Set when runSuites() begins
+let _currentTestName = null;  // Set during test execution for live banner
+let _currentSuiteIndex = 0;   // Current suite index for live progress
+let _totalSuites = 0;         // Total number of suites
 
 /**
  * Save the current (in-progress) results to disk and regenerate the live report.
- * Called after each suite completes so the browser auto-refreshes with updated data.
+ * Called after each test completes so the browser auto-refreshes with updated data.
  */
-function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName) {
+function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName, currentTest) {
     try {
         fs.mkdirSync(RESULTS_DIR, { recursive: true });
 
         // Save current results as a live file (will be overwritten each time)
         const liveFile = path.join(RESULTS_DIR, '_live_progress.json');
+        // Include the in-progress suite so Quality/Vision tabs can render partial data
+        const liveSuites = [...results.suites];
+        if (currentSuite && currentSuite.tests.length > 0 && !results.suites.includes(currentSuite)) {
+            liveSuites.push(currentSuite);
+        }
         const liveResults = {
             ...results,
+            suites: liveSuites,
             _live: true,
-            _progress: { suitesCompleted, totalSuites, startedAt },
+            _progress: { suitesCompleted, totalSuites, startedAt, currentTest: currentTest || null },
         };
         fs.writeFileSync(liveFile, JSON.stringify(liveResults, null, 2));
 
@@ -549,12 +559,16 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
         // Clear require cache to pick up any code changes
         delete require.cache[require.resolve(reportScript)];
         const { generateReport } = require(reportScript);
+        const testsCompleted = liveSuites.reduce((n, s) => n + s.tests.length, 0);
+        const testsTotal = liveSuites.reduce((n, s) => n + s.tests.length, 0) + (currentTest ? 0 : 0);
         const reportPath = generateReport(RESULTS_DIR, {
             liveMode: true,
             liveStatus: {
                 suitesCompleted,
                 totalSuites,
-                currentSuite: nextSuiteName || 'Finishing...',
+                currentSuite: currentSuite?.name || nextSuiteName || 'Finishing...',
+                currentTest: currentTest || null,
+                testsCompleted,
                 startedAt,
             },
         });
@@ -582,9 +596,11 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
 }
 
 async function runSuites() {
-    const startedAt = new Date().toISOString();
+    _runStartedAt = new Date().toISOString();
+    _totalSuites = suites.length;
     for (let si = 0; si < suites.length; si++) {
         const s = suites[si];
+        _currentSuiteIndex = si;
         currentSuite = { name: s.name, tests: [], passed: 0, failed: 0, skipped: 0, timeMs: 0 };
         log(`\n${'─'.repeat(60)}`);
         log(`  ${s.name}`);
@@ -601,8 +617,8 @@ async function runSuites() {
 
         emit({ event: 'suite_end', suite: s.name, passed: currentSuite.passed, failed: currentSuite.failed, skipped: currentSuite.skipped, timeMs: currentSuite.timeMs });
 
-        // Live progress: save intermediate results + regenerate report after each suite
-        saveLiveProgress(startedAt, si + 1, suites.length, si + 1 < suites.length ? suites[si + 1]?.name : null);
+        // Live progress: save after suite (also saved per-test, but suite boundary is a clean checkpoint)
+        saveLiveProgress(_runStartedAt, si + 1, suites.length, si + 1 < suites.length ? suites[si + 1]?.name : null);
     }
 }
 
@@ -648,6 +664,12 @@ async function test(name, fn) {
     currentSuite.timeMs += testResult.timeMs;
     currentSuite.tests.push(testResult);
     emit({ event: 'test_result', suite: currentSuite.name, test: name, status: testResult.status, timeMs: testResult.timeMs, detail: testResult.detail.slice(0, 120), tokens: testResult.tokens, perf: testResult.perf });
+
+    // Live progress: save after each test for real-time updates in commander center
+    if (_runStartedAt) {
+        _currentTestName = null; // Test just completed
+        saveLiveProgress(_runStartedAt, _currentSuiteIndex, _totalSuites, null, name);
+    }
 }
 
 function skip(name, reason) {

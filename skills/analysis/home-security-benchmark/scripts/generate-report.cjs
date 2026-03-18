@@ -61,8 +61,9 @@ function generateReport(resultsDir = RESULTS_DIR, opts = {}) {
     }).filter(r => r.data);
 
     // Load fixture images for Vision tab (base64)
+    // Skip in live mode — saves ~43MB of base64 per regeneration, making per-test updates instant
     const fixtureImages = {};
-    if (fs.existsSync(FIXTURES_DIR)) {
+    if (!liveMode && fs.existsSync(FIXTURES_DIR)) {
         try {
             const frames = fs.readdirSync(FIXTURES_DIR).filter(f => /\.(png|jpg|jpeg)$/i.test(f));
             for (const f of frames) {
@@ -865,15 +866,17 @@ function buildLiveBanner(status) {
     if (!status) {
         return `<div class="live-banner"><span class="live-dot"></span> Benchmark starting\u2026</div>`;
     }
-    const { suitesCompleted = 0, totalSuites = 0, currentSuite = '', startedAt = '' } = status;
+    const { suitesCompleted = 0, totalSuites = 0, currentSuite = '', currentTest = '', testsCompleted = 0, startedAt = '' } = status;
     const pct = totalSuites > 0 ? Math.round((suitesCompleted / totalSuites) * 100) : 0;
     const elapsed = startedAt ? Math.round((Date.now() - new Date(startedAt).getTime()) / 1000) : 0;
     const elapsedStr = elapsed > 60 ? Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's' : elapsed + 's';
+    const testInfo = currentTest ? ` — ✅ <em>${escHtml(currentTest)}</em>` : '';
     return `<div class="live-banner">
         <span class="live-dot"></span>
         <strong>LIVE</strong> — Suite ${suitesCompleted}/${totalSuites} (${pct}%)
-        ${currentSuite ? ' — <em>' + currentSuite + '</em>' : ''}
-        <span style="margin-left:auto;font-size:0.78rem">${elapsedStr} elapsed</span>
+        ${currentSuite ? ' — 🔧 <em>' + escHtml(currentSuite) + '</em>' : ''}
+        ${testInfo}
+        <span style="margin-left:auto;font-size:0.78rem">${testsCompleted} tests · ${elapsedStr} elapsed</span>
         <div class="live-progress"><div class="live-progress-bar" style="width:${pct}%"></div></div>
     </div>`;
 }
