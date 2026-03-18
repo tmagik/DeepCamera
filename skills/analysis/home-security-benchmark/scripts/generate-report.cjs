@@ -832,9 +832,15 @@ function getActiveTab() {
 
 function renderActiveTab() {
     const tab = getActiveTab();
-    if (tab === 'performance') renderPerformance();
-    else if (tab === 'quality') renderQuality();
-    else if (tab === 'vision') renderVision();
+    try {
+        if (tab === 'performance') renderPerformance();
+        else if (tab === 'quality') renderQuality();
+        else if (tab === 'vision') renderVision();
+    } catch (e) {
+        const panel = document.getElementById('tab-' + tab);
+        if (panel) panel.innerHTML = '<div style="color:var(--red);padding:2rem"><strong>Render error:</strong> ' + e.message + '<br><pre>' + e.stack + '</pre></div>';
+        console.error('Tab render error:', e);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

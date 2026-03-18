@@ -2466,7 +2466,10 @@ async function main() {
         vlmPassed, vlmTotal,
         timeMs,
         tokens: results.tokenTotals.total,
-        perfSummary: results.perfSummary || null,
+        perfSummary: {
+            ...(results.perfSummary || {}),
+            resource: results.resourceSamples?.length > 0 ? results.resourceSamples[results.resourceSamples.length - 1] : null,
+        },
     });
     fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
 
