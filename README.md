@@ -37,7 +37,7 @@
 </div>
 
 <p align="center">
-<img src="screenshots/aegis-benchmark-demo.gif" alt="Aegis AI Benchmark Demo — Local LLM home security on Apple Silicon" width="100%">
+<a href="screenshots/aegis-benchmark-demo.mp4"><img src="screenshots/aegis-benchmark-demo.gif" alt="Aegis AI Benchmark Demo — Local LLM home security on Apple Silicon (click for full video)" width="80%"></a>
 </p>
 
 ---
