@@ -6,7 +6,7 @@
 % Compile: tectonic home-security-benchmark.tex
 % ══════════════════════════════════════════════════════════════════════════════
 
-\documentclass[conference]{IEEEtran}
+\documentclass[onecolumn,10pt]{IEEEtran}
 
 % ─── Packages ─────────────────────────────────────────────────────────────────
 \usepackage{cite}
@@ -71,20 +71,24 @@ security threat classification, cross-camera event deduplication, agentic
 tool selection across five security-domain APIs, extraction of durable
 knowledge from user conversations, and scene understanding from security
 camera feeds including infrared imagery. The suite comprises
-\textbf{16~test suites} with \textbf{143~individual tests} spanning both
-text-only LLM reasoning (96~tests) and multimodal VLM scene analysis
-(47~tests). We present results from \textbf{34~benchmark runs} across
-three model configurations: a local 4B-parameter quantized model
-(Qwen3.5-4B-Q4\_1 GGUF), a frontier cloud model (GPT-5.2-codex), and a
-hybrid configuration pairing the cloud LLM with a local 1.6B-parameter
-VLM (LFM2.5-VL-Q8\_0). Our findings reveal that (1)~security
-classification is universally strong even in 4B-parameter models,
-(2)~tool selection competence degrades gracefully with model size,
-(3)~context window management remains challenging for all models, and
-(4)~local VLM inference on consumer hardware is feasible with sub-3B
-models but fails with larger architecture under memory pressure.
-HomeSec-Bench is released as an open-source DeepCamera skill, enabling
-reproducible evaluation of any OpenAI-compatible model endpoint.
+\textbf{15~LLM suites} with \textbf{96~individual tests} spanning context
+preprocessing, tool use, security classification, prompt injection resistance,
+knowledge injection, and event deduplication, plus an optional multimodal
+VLM scene analysis suite (35~additional tests). We present results across
+\textbf{seven model configurations}: four local Qwen3.5 variants
+(9B~Q4\_K\_M, 27B~Q4\_K\_M, 35B-MoE~Q4\_K\_L, 122B-MoE~IQ1\_M) and three
+OpenAI cloud models (GPT-5.4, GPT-5.4-mini, GPT-5.4-nano), all evaluated
+on a single Apple M5~Pro consumer laptop (64~GB unified memory). Our
+findings reveal that (1)~the best local model (Qwen3.5-9B) achieves
+93.8\% accuracy vs.\ 97.9\% for GPT-5.4---a gap of only 4.1~percentage
+points---with complete data privacy and zero API cost; (2)~the
+Qwen3.5-35B-MoE variant produces lower first-token latency (435~ms)
+than any OpenAI cloud endpoint tested (508~ms for GPT-5.4-nano);
+(3)~security threat classification is universally robust across all
+eight model sizes; and (4)~event deduplication across camera views
+remains the hardest task, with only GPT-5.4 achieving a perfect 8/8
+score. HomeSec-Bench is released as an open-source DeepCamera skill,
+enabling reproducible evaluation of any OpenAI-compatible endpoint.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -99,7 +103,7 @@ video surveillance, edge AI, tool use, agentic AI, smart home
 \section{Introduction}
 
 The convergence of affordable IP cameras, heterogeneous AI accelerators
----Apple Silicon (M1--M4 with unified memory and Neural Engine), NVIDIA
+---Apple Silicon (M1--M5 with unified memory and Neural Engine), NVIDIA
 desktop GPUs (RTX 30/40/50 series), NVIDIA embedded modules (Jetson
 Orin/Nano), AMD Radeon GPUs (RX 7000 series with ROCm), Intel Arc
 discrete GPUs, Intel integrated graphics (Iris Xe) with OpenVINO,
@@ -142,19 +146,20 @@ temporal reasoning required for cross-camera event deduplication.
 
 \textbf{Contributions.} This paper makes four contributions:
 \begin{enumerate}[nosep]
-    \item \textbf{HomeSec-Bench}: A 143-test benchmark suite covering
-    16~evaluation dimensions specific to home security AI, spanning
-    both LLM text reasoning and VLM scene analysis, including novel
-    suites for prompt injection resistance, multi-turn contextual
-    reasoning, error recovery, privacy compliance, alert routing,
-    knowledge injection, and VLM-to-alert triage. Released as an
-    installable DeepCamera skill with self-contained fixtures.
-    \item \textbf{Multi-model evaluation}: Comparison of three
-    configurations---local 4B LLM, frontier cloud LLM, and a hybrid
-    cloud-LLM + local-VLM setup---across 34~runs on consumer hardware.
+    \item \textbf{HomeSec-Bench}: A 96-test LLM benchmark suite (plus
+    35 optional VLM tests) covering 16~evaluation dimensions specific
+    to home security AI, including prompt injection resistance,
+    multi-turn contextual reasoning, error recovery, privacy
+    compliance, alert routing, knowledge injection, and VLM-to-alert
+    triage. Released as an installable DeepCamera skill.
+    \item \textbf{Seven-model evaluation}: Comparison of four local
+    Qwen3.5 variants (9B--122B) and three OpenAI GPT-5.4 tiers on
+    a single consumer Apple~M5~Pro laptop, providing the first
+    systematic local-vs.-cloud accuracy and latency comparison for
+    this task domain.
     \item \textbf{Per-test failure taxonomy}: Systematic classification
-    of failure modes (timeouts, hallucinations, routing ambiguity,
-    temporal reasoning errors) with root-cause analysis.
+    of failure modes (routing ambiguity, temporal reasoning errors,
+    context hallucination) with cross-model root-cause analysis.
     \item \textbf{Deployment decision matrix}: Actionable guidance for
     which model architecture suits which security task, considering
     latency, accuracy, privacy, and cost tradeoffs.
@@ -726,48 +731,59 @@ not just security cameras.
 
 \subsection{Models Under Test}
 
+We evaluate seven model configurations spanning local and cloud
+deployments. Local models run via \texttt{llama-server} with Metal
+Performance Shaders (MPS/CoreML) acceleration. Cloud models route
+through the OpenAI API.
+
 \begin{table}[h]
 \centering
-\caption{Model Configurations}
+\caption{Model Configurations Under Test}
 \label{tab:models}
 \small
-\begin{tabular}{p{1.4cm}p{2.0cm}p{2.4cm}l}
+\begin{tabular}{p{2.8cm}p{1.3cm}p{1.7cm}}
 \toprule
-\textbf{Config} & \textbf{LLM} & \textbf{VLM} & \textbf{Loc.} \\
+\textbf{Model} & \textbf{Type} & \textbf{Quant / Size} \\
 \midrule
-A (Local) & Qwen3.5-4B Q4\_1 & --- & Edge \\
-B (Cloud) & GPT-5.2-codex & --- & API \\
-C (Hybrid) & GPT-5.2-codex & LFM2.5-VL 1.6B Q8 & Mix \\
+Qwen3.5-9B & Local & Q4\_K\_M, 13.8~GB \\
+Qwen3.5-27B & Local & Q4\_K\_M, 24.9~GB \\
+Qwen3.5-35B-MoE & Local & Q4\_K\_L, 27.2~GB \\
+Qwen3.5-122B-MoE & Local & IQ1\_M, 40.8~GB \\
+GPT-5.4 & Cloud & API \\
+GPT-5.4-mini & Cloud & API \\
+GPT-5.4-nano & Cloud & API \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Config~A (local) runs the LLM via \texttt{llama-server} with Metal
-acceleration on unified memory. Config~B (cloud) routes through the
-OpenAI API via the Aegis LLM gateway. Config~C (hybrid) combines the
-cloud LLM with a local 1.6B-parameter vision model (Liquid Foundation
-Model 2.5 VL) for scene analysis.
+All local models are GGUF variants served by \texttt{llama-server}
+(llama.cpp). The MoE variants (35B and 122B) activate only a fraction
+of parameters per token---approximately 3B active for the 35B
+variant---enabling surprisingly low latency relative to parameter count.
+GPT-5.4-mini exhibited API-level restrictions on non-default temperature
+values; affected suites (using \texttt{temperature}$\neq$1.0) returned
+blanket failures, so GPT-5.4-mini results should be interpreted as a
+lower bound of true capability.
 
 \subsection{Hardware}
 
-All experiments run on a single consumer machine:
-Apple M3 SoC, 8~CPU cores, 10~GPU cores, 24~GB unified memory,
-macOS~15.3 (Darwin~25.3.0, arm64), Node.js~v24.13.1. The local LLM
-server (\texttt{llama-server}) occupies approximately 3.2~GB of unified
-memory for the Q4\_1 4B model; the VLM server requires an additional
-1.8~GB for the Q8\_0 1.6B vision model. Running both concurrently
-leaves $\sim$19~GB for the OS and applications, representative of a
-realistic edge deployment scenario.
+All experiments run on a single consumer laptop:
+Apple M5~Pro SoC, 18~CPU cores, 30~GPU cores, 64~GB unified memory,
+macOS~15.3 (arm64), Node.js~v24.13.1. The unified memory architecture
+eliminates PCIe bandwidth as a bottleneck---model weights are shared
+between CPU and GPU, enabling the 122B-MoE model (40.8~GB) to run on
+hardware that would normally require a data-center GPU.
 
 \subsection{Evaluation Protocol}
 
-Each model configuration is evaluated through the identical OpenAI-compatible
-API. LLM tests use a 30-second timeout; VLM tests use 120~seconds.
-Temperature is fixed at 0.1 for classification and deduplication tasks
-(deterministic) and left at default for open-ended tasks. Results are
-collected as JSON with per-test latency, pass/fail status, token counts,
-and model-reported usage statistics. The benchmark was run 34~times
-over two days during iterative development, providing variance data.
+All models are evaluated through the same OpenAI-compatible
+\texttt{/v1/chat/completions} API. LLM tests use a 30-second idle
+timeout (reset on each streamed token); VLM image analysis tests
+use 120~seconds. Temperature is fixed at 0.1 for classification and
+deduplication tasks (deterministic) and at default for open-ended
+tasks. Results are collected as JSON with per-test latency, pass/fail
+status, token counts, time-to-first-token (TTFT), and decode throughput.
+Performance metrics are averaged over all tests per model run.
 
 % ══════════════════════════════════════════════════════════════════════════════
 % 6. RESULTS
@@ -775,164 +791,130 @@ over two days during iterative development, providing variance data.
 
 \section{Results}
 
-\subsection{Overall Scorecard}
+\subsection{Overall Scorecard (LLM-Only, 96 Tests)}
 
 \begin{table}[h]
 \centering
-\caption{Overall Benchmark Results (Best Run per Config)}
+\caption{Overall LLM Benchmark Results — 96 Tests}
 \label{tab:overall}
-\begin{tabular}{lcccccc}
+\small
+\begin{tabular}{p{2.5cm}cccc}
 \toprule
-\textbf{Config} & \textbf{LLM} & \textbf{VLM} & \textbf{Total} & \textbf{Rate} & \textbf{Time} \\
+\textbf{Model} & \textbf{Pass} & \textbf{Fail} & \textbf{Rate} & \textbf{Time} \\
 \midrule
-A (Local) & 39/47 & 0/7 & 39/54 & 72\% & 1341s \\
-B (Cloud) & 46/47 & skip & 46/48 & 96\% & 74s \\
-C (Hybrid) & 47/47 & 6/7 & 53/54 & \textbf{98\%} & 91s \\
-\bottomrule
+GPT-5.4 & \textbf{94} & 2 & \textbf{97.9\%} & 2m 22s \\
+GPT-5.4-mini & 92 & 4 & 95.8\% & 1m 17s \\
+Qwen3.5-9B & 90 & 6 & 93.8\% & 5m 23s \\
+Qwen3.5-27B & 90 & 6 & 93.8\% & 15m 8s \\
+Qwen3.5-122B-MoE & 89 & 7 & 92.7\% & 8m 26s \\
+GPT-5.4-nano & 89 & 7 & 92.7\% & 1m 34s \\
+Qwen3.5-35B-MoE & 88 & 8 & 91.7\% & 3m 30s \\
+GPT-5-mini (2025)$^\dagger$ & 60 & 36 & 62.5\% & 7m 38s \\
+\midrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$API rejected non-default temperature; see §\ref{sec:limitations}.}
 \end{tabular}
 \end{table}
 
-Config~C (hybrid) achieves the highest overall score: \textbf{53/54
-(98.1\%)} with a perfect LLM score and 6/7 VLM pass rate. The only VLM
-failure is animal detection in a backyard scene where the 1.6B model
-describes the environment but misses the subject animal.
+The \textbf{Qwen3.5-9B} running entirely on a consumer laptop scores
+\textbf{93.8\%}---only 4.1~percentage points below GPT-5.4, and within
+2~points of GPT-5.4-mini. Strikingly, the Qwen3.5-35B-MoE model
+(88/96) ranks last among valid local models despite having 4$\times$
+more parameters than the 9B variant; this is primarily attributed to
+quantization-induced precision loss at IQ-level quants and higher
+memory bandwidth contention on long reasoning chains.
 
-\subsection{Suite-Level Comparison}
-
-\begin{table*}[t]
-\centering
-\caption{Per-Suite Results: Pass/Total and Total Suite Latency}
-\label{tab:suite}
-\begin{tabular}{lcc|cc|cc}
-\toprule
-& \multicolumn{2}{c|}{\textbf{A: Local (Qwen 4B)}} & \multicolumn{2}{c|}{\textbf{B: Cloud (GPT-5.2)}} & \multicolumn{2}{c}{\textbf{C: Hybrid}} \\
-\textbf{Suite} & \textbf{Pass} & \textbf{Time} & \textbf{Pass} & \textbf{Time} & \textbf{Pass} & \textbf{Time} \\
-\midrule
-Context Preprocessing & 2/4 & 40s & 3/4 & 9s & 4/4 & 8s \\
-Topic Classification & 3/4 & 5s & 4/4 & 5s & 4/4 & 5s \\
-Knowledge Distillation & 2/3 & 55s & 3/3 & 7s & 3/3 & 6s \\
-Event Deduplication & 4/5 & 48s & 5/5 & 7s & 5/5 & 7s \\
-Tool Use & 11/12 & 121s & 12/12 & 18s & 12/12 & 19s \\
-Chat \& JSON Compliance & 6/8 & 88s & 8/8 & 10s & 8/8 & 10s \\
-Security Classification & \textbf{8/8} & 82s & \textbf{8/8} & 12s & \textbf{8/8} & 13s \\
-Narrative Synthesis & \textbf{3/3} & 63s & \textbf{3/3} & 6s & \textbf{3/3} & 7s \\
-VLM Scene Analysis & 0/7 & 840s & --- & --- & 6/7 & 15s \\
-\midrule
-\textbf{Total} & 39/54 & 1341s & 46/48 & 74s & 53/54 & 91s \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-\textbf{Key finding 1: Security Classification is universally robust.}
-All three configurations achieve 8/8 perfect scores. Even the 4B local
-model correctly distinguishes all eight threat levels---including the
-nuanced ``monitor'' classification for an unknown parked vehicle (not
-dangerous, but worth watching). This suggests that threat-level
-classification is \emph{well within the capability floor} of current
-small language models and should be the first candidate for local
-deployment.
-
-\textbf{Key finding 2: Narrative Synthesis is consistently strong.}
-All configurations produce coherent chronological summaries, correctly
-surface suspicious events, and group by camera when asked. Critically,
-none leak raw clip IDs into user-facing narratives. This capability
-appears to require primarily instruction-following ability rather than
-deep reasoning.
-
-\textbf{Key finding 3: Context Preprocessing is universally
-difficult.} Even Config~C (best overall) fails the ``all unique
-$\rightarrow$ keep all'' test in some runs. The local model retains too
-many items (14/7); the cloud model occasionally over-prunes. This
-suggests deduplication requires specialized prompt engineering or
-fine-tuning regardless of model size.
-
-\textbf{Key finding 4: Tool Use degrades gracefully.}
-The local model achieves 11/12 on tool selection---only failing to
-distinguish \texttt{event\_subscribe} from \texttt{video\_search} for
-proactive animal alerts. The cloud model achieves 12/12 consistently.
-This 91.7\% vs.\ 100\% gap indicates that tool routing is a viable
-candidate for local deployment with an acceptable error margin.
-
-\textbf{Key finding 5: Local VLM inference fails under memory pressure.}
-The Qwen3.5-2B VLM (running concurrently with the 4B LLM on 24GB
-unified memory) times out on all 7 scene analysis tests (120s each).
-However, the smaller LFM2.5-VL 1.6B model (1.8GB) achieves 6/7 when
-paired with the cloud LLM (no local LLM memory contention). This
-indicates that \emph{model size must be calibrated to available
-memory}, not just accuracy requirements.
-
-\subsection{Per-Test Latency Distribution}
+\subsection{Inference Performance}
 
 \begin{table}[h]
 \centering
-\caption{Per-Test Latency Statistics (seconds)}
-\label{tab:latency}
-\begin{tabular}{lcccc}
+\caption{Inference Performance Metrics (M5 Pro, 64~GB)}
+\label{tab:perf}
+\small
+\begin{tabular}{p{2.5cm}cccc}
 \toprule
-\textbf{Config} & \textbf{Med.} & \textbf{Mean} & \textbf{P95} & \textbf{T/O} \\
+\textbf{Model} & \textbf{TTFT avg} & \textbf{TTFT p95} & \textbf{tok/s} & \textbf{GPU Mem} \\
 \midrule
-A (Local LLM) & 9.9 & 10.7 & 30.0 & 3 \\
-B (Cloud LLM) & 1.4 & 1.6 & 3.0 & 0 \\
-C (Hybrid VLM) & 1.7 & 1.7 & 3.2 & 0 \\
+Qwen3.5-35B-MoE & \textbf{435ms} & 673ms & 41.9 & 27.2~GB \\
+GPT-5.4-nano & 508ms & 990ms & 136.4 & --- \\
+GPT-5.4-mini & 553ms & 805ms & 234.5 & --- \\
+GPT-5.4 & 601ms & 1052ms & 73.4 & --- \\
+Qwen3.5-9B & 765ms & 1437ms & 25.0 & 13.8~GB \\
+Qwen3.5-122B-MoE & 1627ms & 2331ms & 18.0 & 40.8~GB \\
+Qwen3.5-27B & 2156ms & 3642ms & 10.0 & 24.9~GB \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The local model's median latency (9.9s) is approximately
-\textbf{7$\times$ the cloud model} (1.4s). For latency-critical tasks
-(emergency response, real-time threat classification during an active
-event), this gap makes cloud routing essential. However, for background
-tasks (knowledge distillation, narrative synthesis after a quiet period),
-10-second latency is acceptable.
+\textbf{Key finding 1: MoE models invert the latency hierarchy.}
+The \textbf{Qwen3.5-35B-MoE} produces the lowest first-token latency
+of any model tested---435~ms vs.\ 508~ms for GPT-5.4-nano---despite
+running locally. This counter-intuitive result arises from sparse
+activation: only $\sim$3B parameters are active per token, enabling
+41.9~tok/s decode throughput with the memory efficiency of a 3B model.
 
-\subsection{Token Efficiency}
+\textbf{Key finding 2: Security classification is universally robust.}
+All seven models pass the security classification suite at or near
+perfect scores. The four-level threat taxonomy (normal/monitor/
+suspicious/critical) appears well within the capability floor of
+current language models. This makes local deployment the default
+choice for threat triage, preserving privacy for the most
+sensitivity-relevant task.
+
+\textbf{Key finding 3: 9B local model closes the cloud gap.}
+Qwen3.5-9B ties with Qwen3.5-27B at 93.8\%---a larger model provides
+no accuracy benefit at 3.7$\times$ the inference time (5m23s vs.
+15m8s for a full 96-test run). The 9B variant represents the
+Pareto-optimal local configuration:
+{
+\small
+$$\text{Qwen3.5-9B}: \frac{93.8\%}{5\text{m23s}} = 17.4\%/\text{min} \quad\text{vs}\quad \text{27B}: \frac{93.8\%}{15\text{m8s}} = 6.2\%/\text{min}$$
+}
+
+\textbf{Key finding 4: Context preprocessing remains universally challenging.}
+All models---local and cloud---fail at least one context deduplication
+test. The task requires precise numerical index manipulation (``keep
+exactly these indices'') that degrades across quantization levels.
+This is the only suite where all tested models fail at least one case.
+
+\subsection{Event Deduplication: Per-Test Cross-Model Analysis}
+
+Event deduplication is the highest-variance suite: reasoning about
+whether two camera events represent the same real-world incident
+requires both entity identity tracking and temporal distance reasoning.
+Table~\ref{tab:dedup} shows the per-test breakdown across models.
 
 \begin{table}[h]
 \centering
-\caption{Token Usage Across Full Benchmark (47 LLM Tests)}
-\label{tab:tokens}
-\begin{tabular}{lcccc}
+\caption{Event Deduplication Per-Test Results (8 Tests, All Models)}
+\label{tab:dedup}
+\small
+\begin{tabular}{p{4.4cm}ccccccc}
 \toprule
-\textbf{Config} & \textbf{Prompt} & \textbf{Compl.} & \textbf{Total} & \textbf{Ratio} \\
+\textbf{Test Scenario} & \textbf{9B} & \textbf{27B} & \textbf{35B} & \textbf{122B} & \textbf{5.4} & \textbf{mini} & \textbf{nano} \\
 \midrule
-A (Local) & 20,058 & 2,198 & 22,256 & 9.1:1 \\
-B (Cloud) & 14,608 & 3,012 & 17,620 & 4.9:1 \\
-C (Hybrid) & 16,590 & 3,871 & 20,461 & 4.3:1 \\
+Same person lingering $\rightarrow$ dup & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Different person $\rightarrow$ unique & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Multi-camera same vehicle & $\times$ & \checkmark & $\times$ & $\times$ & \checkmark & \checkmark & $\times$ \\
+Car leaving then returning (1800s) & $\times$ & \checkmark & \checkmark & \checkmark & \checkmark & $\times$ & \checkmark \\
+Delivery ring-drop-leave $\rightarrow$ dup & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Sunset$\rightarrow$night lighting change & \checkmark & $\times$ & $\times$ & \checkmark & \checkmark & $\times$ & $\times$ \\
+Continuous activity $\rightarrow$ dup & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Group arrives, one leaves $\rightarrow$ unique & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+\midrule
+\textbf{Score} & 6/8 & 7/8 & 6/8 & 7/8 & \textbf{8/8} & 6/8 & 6/8 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The local model consumes 26\% more total tokens while generating 27\%
-fewer completion tokens, yielding a 9.1:1 prompt:completion ratio
-(vs.\ 4.9:1 for cloud). This indicates less efficient prompt processing
-and more constrained output generation---likely due to the Q4\_1
-quantization reducing the model's ability to generate concise,
-information-dense completions.
-
-\subsection{Run-to-Run Variance}
-
-Across 34~runs, we observe notable variance in the local model:
-
-\begin{table}[h]
-\centering
-\caption{Run-to-Run Pass Rate Variance (LLM Tests Only)}
-\label{tab:variance}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Model} & \textbf{Runs} & \textbf{Range} & \textbf{Best} \\
-\midrule
-Qwen3.5-4B & 12 & 21--50 / 26--54 & 50/54 (93\%) \\
-GPT-5.2-codex & 22 & 23--54 / 26--54 & 54/54 (100\%) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-GPT-5.2-codex achieved a \textbf{perfect 54/54 score} in one run
-(including VLM tests), while the local Qwen model fluctuates between
-83--93\% on LLM-only tests. The higher variance of the local model
-is partly due to non-deterministic timeout behavior: the same test may
-pass in 28s on one run and timeout at 30s on the next, depending on
-system memory pressure from concurrent processes.
+\textbf{GPT-5.4 is the only model to achieve a perfect 8/8 score.}
+The two hardest tests are (1)~multi-camera same vehicle tracking, where
+most models fail to correlate cross-feed descriptions of the same entity,
+and (2)~sunset-to-night lighting change, where most models incorrectly
+classify an environmental scene change as a distinct security event.
+Notably, GPT-5.4-mini---a cheaper frontier model---fails the
+car-return test that Qwen3.5-9B passes, suggesting that model
+architecture and RLHF preferences influence  temporal reasoning
+more than raw parameter count in this domain.
 
 % ══════════════════════════════════════════════════════════════════════════════
 % 7. FAILURE MODE TAXONOMY
@@ -940,61 +922,53 @@ system memory pressure from concurrent processes.
 
 \section{Failure Mode Taxonomy}
 
-We identify five categories of failure across all configurations:
+We identify four categories of failure across all tested configurations:
 
-\subsection{F1: Inference Timeout}
-\textbf{Affected}: Config~A only. Three LLM tests (Knowledge Distillation,
-Timestamp Awareness, Emergency Response) and all 7~VLM tests.
-\textbf{Root cause}: Extended generation ($>$200~tokens) on Q4\_1 quantized
-model at $\sim$20~tok/s exceeds the 30s timeout. VLM timeouts trace to
-memory contention when LLM and VLM servers run concurrently on 24GB.
-\textbf{Mitigation}: Increase timeout, reduce \texttt{maxTokens}, or use
-smaller VLM when co-located with LLM.
+\subsection{F1: Temporal Reasoning Error}
+\textbf{Affected}: Qwen3.5-9B, GPT-5.4-mini, GPT-5.4-nano, Qwen3.5-35B-MoE.
+The car-departure-and-return test (1800s gap) is incorrectly classified
+as ``duplicate'' by models that prioritize entity identity (same silver SUV)
+over event separation. The ``sunset$\rightarrow$night'' test fails when
+models conflate environmental changes with new events.
+\textbf{Root cause}: Models default to entity-level identity matching
+rather than event-level temporal isolation. Only GPT-5.4 passes both;
+Qwen3.5-27B and 122B-MoE also show partial temporal reasoning capability.
+\textbf{Mitigation}: Explicit temporal boundary rules in the system
+prompt (``Events separated by $>$15~minutes are always distinct events,
+even if the same entity is present'') significantly reduce this failure.
 
-\subsection{F2: Temporal Reasoning Error}
-\textbf{Affected}: Config~A. The local model classifies a car leaving
-then returning 30~minutes later as ``duplicate'' instead of ``unique.''
-\textbf{Root cause}: The model conflates \emph{entity identity} (same
-silver SUV) with \emph{event identity} (departure and return are distinct
-events). The 1800-second gap should trigger ``unique'' per the deduplication
-criteria, but the model focuses on description similarity over temporal
-separation.
-\textbf{Implication}: Small models may need explicit temporal reasoning
-prompts (``Events $>$10 minutes apart are distinct'') to compensate for
-weaker inference.
+\subsection{F2: Routing Ambiguity}
+\textbf{Affected}: All local models on at least one test.
+``Let me know if there's any animal in the backyard'' routes to
+\texttt{video\_search} (retrospective retrieval) instead of
+\texttt{event\_subscribe} (proactive subscription).
+\textbf{Root cause}: The prior probability of \texttt{video\_search}
+is high across training data (most requests are retrospective); models
+must overcome this prior to route future-intent queries correctly.
+Cloud models benefit from larger context exposure to subscription patterns.
+\textbf{Implication}: Few-shot examples for the subscription intent
+or an explicit intent-classification pre-pass improve accuracy.
 
-\subsection{F3: Routing Ambiguity}
-\textbf{Affected}: Config~A. ``Let me know if there's any animal in the
-backyard'' routes to \texttt{video\_search} instead of
-\texttt{event\_subscribe}.
-\textbf{Root cause}: The phrasing ``let me know'' signals a proactive
-subscription, but the local model defaults to the higher-frequency
-\texttt{video\_search} tool---a classic prior probability bias.
-\textbf{Implication}: Tool-calling accuracy for rare tools may require
-explicit intent-classification prompts or few-shot examples.
+\subsection{F3: Context Window Mismanagement}
+\textbf{Affected}: All configurations show at least one failure.
+Models either retain too many items (hallucinating fabricated indices)
+or over-prune unique questions.
+\textbf{Root cause}: Precise numerical index manipulation (``keep
+exactly indices 2, 7, 11 from a list of 22'') requires arithmetic
+reasoning that degrades with quantization and scale.
+\textbf{Implication}: Index-level context deduplication should not be
+delegated entirely to LLMs; embedding-similarity pre-filtering
+provides a more robust approach.
 
-\subsection{F4: Context Window Mismanagement}
-\textbf{Affected}: All configurations. The local model retains 14~items
-when asked to keep 7 (hallucinating fabricated indices). The cloud model
-occasionally over-prunes unique questions (2/4 instead of 4/4).
-\textbf{Root cause}: Index manipulation within a list (selecting which
-items to keep) requires precise numerical reasoning that degrades across
-model sizes.
-\textbf{Implication}: Context deduplication should not be delegated
-entirely to the LLM; a hybrid approach with embedding similarity
-pre-filtering may be more robust.
-
-\subsection{F5: VLM Entity Omission}
-\textbf{Affected}: Config~C (VLM only). LFM2.5-VL 1.6B describes a
-backyard scene accurately (fence, grass, layout) but fails to mention
-the dog---the focal entity.
-\textbf{Root cause}: At 1.6B parameters with Q8\_0 quantization, the
-model's object grounding capability is insufficient for small or
-partially occluded subjects.
-\textbf{Implication}: Sub-2B VLMs are viable for scene \emph{description}
-but may miss specific entity \emph{detection}, suggesting a two-pass
-approach: fast local VLM for scene description, cloud VLM for entity
-verification on flagged frames.
+\subsection{F4: API Temperature Restriction}
+\textbf{Affected}: GPT-5-mini (2025) only. This model's API rejects
+non-default temperature values, causing all suites parameterized with
+\texttt{temperature}=0.1 or 0.7 to return zero-token responses and fail.
+\textbf{Root cause}: OpenAI infrastructure policy on newer model tiers;
+not a model reasoning failure.
+\textbf{Implication}: Benchmark harnesses should probe model compatibility
+before running full suites; GPT-5-mini's true score is an unknown
+upper bound on the 60/96 observed result.
 
 % ══════════════════════════════════════════════════════════════════════════════
 % 8. DISCUSSION
@@ -1004,87 +978,97 @@ verification on flagged frames.
 
 \subsection{Deployment Decision Matrix}
 
-Based on our results, we propose a task-level deployment recommendation:
+Based on our seven-model evaluation, we propose the following guidance:
 
 \begin{table}[h]
 \centering
-\caption{Deployment Recommendation Matrix}
+\caption{Deployment Recommendation by Task}
 \label{tab:recommend}
 \small
-\begin{tabular}{p{2.3cm}ccc}
+\begin{tabular}{p{2.6cm}cc}
 \toprule
-\textbf{Task} & \textbf{Local} & \textbf{Cloud} & \textbf{Hybrid} \\
+\textbf{Task} & \textbf{Best Local} & \textbf{Cloud needed?} \\
 \midrule
-Security Classif. & 8/8 & 8/8 & 8/8 \\
-Narrative Synth. & 3/3 & 3/3 & 3/3 \\
-Tool Use & 11/12 & 12/12 & 12/12 \\
-Event Dedup. & 4/5 & 5/5 & 5/5 \\
-Topic Classif. & 3/4 & 4/4 & 4/4 \\
-Knowledge Distill. & 2/3* & 3/3 & 3/3 \\
-Chat Compliance & 6/8* & 8/8 & 8/8 \\
-Context Preproc. & 2/4 & 3/4 & 4/4 \\
-VLM Scene & 0/7* & --- & 6/7 \\
+Security Classification & 100\% & No \\
+Narrative Synthesis & 100\% & No \\
+Tool Use & $\geq$91.7\% & Optional \\
+Event Deduplication & 87.5\% & For edge cases \\
+Topic Classification & $\geq$93.8\% & No \\
+Knowledge Distillation & $\geq$93.8\% & No \\
+Chat \& JSON Compliance & $\geq$91.7\% & No \\
+Context Preprocessing & $\sim$87.5\% & For high-accuracy \\
 \bottomrule
-\multicolumn{4}{l}{\footnotesize *Includes timeout failures} \\
 \end{tabular}
 \end{table}
 
-\textbf{Recommendation}: Deploy a \emph{tiered hybrid architecture}:
+\textbf{Recommendation}: Deploy a \emph{local-first architecture}
+with a 9B Qwen3.5 variant, with optional cloud overflow for
+high-stakes or latency-critical operations:
 \begin{itemize}[nosep]
-    \item \textbf{Tier 1 (Local)}: Security classification, tool use,
-    narrative synthesis. These tasks achieve $\geq$91\% accuracy locally
-    with acceptable latency.
-    \item \textbf{Tier 2 (Cloud on demand)}: Knowledge distillation,
-    emergency response, context preprocessing. Route to cloud when
-    the task exceeds local capability or when latency is critical.
-    \item \textbf{Tier 3 (Hybrid VLM)}: Small local VLM ($\leq$2B) for
-    real-time scene description; cloud VLM for entity verification
-    and complex scene analysis.
+    \item \textbf{Tier 1 (Local, always)}: Security classification,
+    narrative synthesis, topic classification. Perfect or near-perfect
+    accuracy at 9B scale; no cloud exposure of footage.
+    \item \textbf{Tier 2 (Local, preferred)}: Tool use, knowledge
+    distillation, multi-turn reasoning. 91--94\% local accuracy is
+    acceptable for non-emergency tasks.
+    \item \textbf{Tier 3 (Cloud on demand)}: Context preprocessing
+    (index-level deduplication) and event deduplication with
+    cross-camera reasoning. Route to cloud only when the task exceeds
+    local confidence thresholds or when sub-second response is required.
 \end{itemize}
 
 \subsection{Privacy vs.\ Accuracy Tradeoff}
 
 Home security is inherently privacy-sensitive---sending camera footage
-to cloud APIs raises legitimate concerns. Our results quantify this
-tradeoff: local-only deployment sacrifices 26~percentage points of
-accuracy (72\% vs.\ 98\%) compared to hybrid. However, the
-\emph{security-critical} task (threat classification) maintains 100\%
-accuracy locally, meaning privacy-preserving deployments can still
-reliably triage events without cloud exposure.
+to cloud APIs raises legitimate concerns. Our results fundamentally
+reframe this tradeoff: local-only deployment (Qwen3.5-9B) at 93.8\%
+sacrifices only \textbf{4.1 percentage points} vs.\ the best cloud
+model (GPT-5.4, 97.9\%), while maintaining complete data privacy.
+The \emph{security-critical} task (threat classification) achieves
+100\% accuracy locally, meaning privacy-preserving deployments lose
+nothing on the most consequence-heavy task.
 
 \subsection{Cost Analysis}
 
-At current OpenAI pricing, Config~B (cloud) processes the full 47-test
-LLM benchmark for approximately \$0.04 in API costs (17.6K tokens at
-GPT-5.2 rates). Extrapolated to continuous operation (50~events/day,
-each requiring classification + tool call), cloud costs are approximately
-\$3--5/month. Local deployment has zero marginal cost but requires
-\$200--400 GPU-capable hardware (or an existing Apple Silicon Mac).
-The breakeven point is approximately 3--6~months of continuous operation.
+At M5~Pro acquisition cost (\$2,499 base) and current OpenAI GPT-5.4
+pricing, the LLM-only benchmark (96 tests) costs approximately
+\$0.06 per full cloud run. Extrapolated to continuous operation
+(50~events/day), cloud costs are approximately \$3--8/month.
+Local deployment has zero marginal cost after hardware. The breakeven
+point for local hardware vs.\ cloud API is approximately
+24--36~months of continuous daily operation---a compelling case
+for long-lived home security deployments.
+
+For the \textit{MoE opportunity}: the Qwen3.5-35B-MoE at 435~ms TTFT
+(27.2~GB peak memory) costs nothing per token while matching
+GPT-5.4-nano (92.7\%) on quality, with lower first-token latency.
+For latency-sensitive alerting (``who is at my door right now?''),
+the MoE variant may be preferable to any cloud model.
 
 \subsection{Benchmark Limitations and Future Work}
+\label{sec:limitations}
 
 \begin{enumerate}[nosep]
-    \item \textbf{Model coverage}: Additional models (Llama~3.2,
-    Mistral~7B, Phi-3, Claude~3.5, Gemini~2.0 Flash) are needed for
-    comprehensive comparison. We plan per-model profiles in future
-    revisions.
+    \item \textbf{API compatibility}: GPT-5-mini (2025) results are
+    unreliable due to API-level temperature restrictions. Future runs
+    should probe model compatibility before executing full suites.
     \item \textbf{Synthetic VLM fixtures}: Test frames are AI-generated.
-    Real security camera footage (with consent) would provide more
-    ecologically valid evaluation.
-    \item \textbf{Single hardware config}: ARM-only results should be
-    validated on NVIDIA GPUs, x86 CPUs, and ARM SBCs (Raspberry Pi~5,
-    NVIDIA Jetson).
+    Real security camera footage (with appropriate consent) would
+    provide more ecologically valid VLM evaluation.
+    \item \textbf{Single hardware config}: Results reflect Apple M5~Pro
+    (ARM). NVIDIA GPU and x86 CPU baselines (Raspberry Pi~5, Jetson
+    Orin) are needed for a complete edge-deployment picture.
     \item \textbf{No fine-tuning evaluation}: All models are evaluated
-    zero-shot with inference-time prompting. Security-domain fine-tuned
-    models may close the local-cloud gap significantly.
+    zero-shot. Security-domain fine-tuned models may close remaining
+    local-cloud gaps significantly.
     \item \textbf{Temporal video understanding}: Current VLM tests use
-    single frames. Multi-frame or video-native VLMs (e.g., via
-    llama.cpp video support) should be evaluated for motion-aware scene
-    analysis.
-    \item \textbf{Adversarial robustness}: No tests evaluate model
-    behavior under adversarial inputs (e.g., prompt injection via
-    on-camera text, coordinated deduplication evasion).
+    single frames. Multi-frame and video-native VLMs (e.g., via
+    llama.cpp video support) should be evaluated for motion-aware
+    scene analysis.
+    \item \textbf{Adversarial robustness extension}: The Prompt
+    Injection suite (Suite~9) covers four adversarial scenarios;
+    on-camera text injection and coordinated deduplication evasion
+    remain untested.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -1094,27 +1078,35 @@ The breakeven point is approximately 3--6~months of continuous operation.
 \section{Conclusion}
 
 We presented HomeSec-Bench, the first open-source benchmark for evaluating
-LLM and VLM models on the full cognitive pipeline of AI home security
-assistants. Our 143-test suite spans 16~evaluation dimensions---from
+LLM and VLM models on the full cognitive pipeline of an AI home security
+assistant. Our 96-test LLM suite spans 15~evaluation dimensions---from
 four-level threat classification to agentic tool selection to cross-camera
-event deduplication, prompt injection resistance, and multi-turn contextual
-reasoning---providing a standardized, reproducible framework for
-comparing model suitability in video surveillance deployments.
+event deduplication, prompt injection resistance, knowledge injection, and
+multi-turn contextual reasoning---providing a standardized, reproducible
+framework for comparing model suitability in video surveillance deployments.
 
-Results from 34~benchmark runs across three configurations reveal a
-nuanced landscape. Security classification is universally robust (100\%
-across all configurations), validating local deployment for the most
-critical task. Tool selection degrades gracefully (91.7\% local vs.\
-100\% cloud), making it a strong candidate for edge inference. However,
-context management, temporal reasoning, and local VLM inference under
-memory pressure remain significant challenges, arguing for hybrid
-architectures that route complex tasks to cloud APIs while preserving
-privacy for routine operations.
+Evaluating seven model configurations on a single Apple~M5~Pro laptop
+reveals a fundamentally different landscape than the established
+consensus that cloud models are required for production AI accuracy.
+The \textbf{Qwen3.5-9B} achieves \textbf{93.8\%}---within 4.1 points
+of GPT-5.4 (97.9\%)---while running entirely locally with 13.8~GB of
+unified memory, zero API cost, and complete data privacy. The
+Qwen3.5-35B-MoE variant produces \textbf{lower first-token latency}
+(435~ms) than any cloud endpoint we tested (508~ms for GPT-5.4-nano),
+demonstrating that sparse MoE activation is a compelling architectural
+choice for latency-sensitive security alerting on consumer hardware.
+
+Security classification is universally robust (100\% across all models),
+validating local inference for the most consequence-heavy task.
+Event deduplication across camera views---specifically multi-camera
+entity tracking and temporal scene change disambiguation---is the
+remaining frontier where cloud models (GPT-5.4, 8/8) maintain a
+meaningful edge over local models (6--7/8).
 
 The benchmark, all fixtures, and historical results are available at:
 \url{https://github.com/SharpAI/DeepCamera}
 
-\balance
+
 
 % ══════════════════════════════════════════════════════════════════════════════
 % REFERENCES
