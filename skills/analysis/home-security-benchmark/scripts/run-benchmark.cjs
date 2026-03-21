@@ -120,6 +120,66 @@ const vlmClient = VLM_URL ? new OpenAI({
     baseURL: `${strip(VLM_URL)}/v1`,
 }) : null;
 
+// ─── Model Family Capabilities Config ────────────────────────────────────────
+//
+// Different model families require different per-request params to control
+// thinking/reasoning behavior.  This table centralizes those differences so
+// llmCall() can dispatch them automatically.
+//
+// Fields:
+//   match         — fn(modelName: string) → bool
+//   apiParams     — extra params merged into every chat/completions request
+//   serverFlags   — llama-server startup flags needed for full control
+//                   (documentation only — llmCall is a client and cannot set these)
+//
+// ┌─────────────────────┬──────────────────────────────┬──────────────────────────────────────────┐
+// │ Family              │ Per-request param             │ llama-server startup flag                │
+// ├─────────────────────┼──────────────────────────────┼──────────────────────────────────────────┤
+// │ Mistral Small 4+    │ reasoning_effort: 'none'      │ --reasoning-budget 0                     │
+// │ Qwen3.5 (thinking)  │ (none needed — handled by     │ --chat-template-kwargs                   │
+// │                     │  /no_think prompt suffix and  │   '{"enable_thinking":false}'            │
+// │                     │  500-token reasoning abort)   │                                          │
+// │ GPT / Claude        │ (none — cloud API, no local   │ N/A                                      │
+// │                     │  thinking tokens)             │                                          │
+// └─────────────────────┴──────────────────────────────┴──────────────────────────────────────────┘
+//
+// To add a new model family: append an entry to MODEL_FAMILIES.
+// The match fn receives the lower-cased model name/filename.
+
+const MODEL_FAMILIES = [
+    {
+        name: 'Mistral',
+        // Covers: Mistral-Small-4, Mistral-*, Magistral-*, Mixtral-*
+        match: (m) => m.includes('mistral') || m.includes('magistral') || m.includes('mixtral'),
+        // reasoning_effort=none disables thinking and routes all output to delta.content.
+        // Supported by both Mistral cloud API and llama-server (forwarded as chat template kwarg).
+        // Without this Mistral routes ALL output to delta.thinking, causing 30s idle timeouts.
+        apiParams: { reasoning_effort: 'none' },
+        serverFlags: '--reasoning-budget 0',
+    },
+    // Qwen3.5 thinking is handled via prompt-level /no_think and the 500-token reasoning
+    // abort in llmCall — no extra per-request params needed.
+    // {
+    //   name: 'Qwen3',
+    //   match: (m) => m.includes('qwen') || m.includes('qwq'),
+    //   apiParams: {},  // could add: { chat_template_kwargs: { enable_thinking: false } }
+    //   serverFlags: "--chat-template-kwargs '{\"enable_thinking\":false}'",
+    // },
+];
+
+/**
+ * Return the merged extra API params for the given model name.
+ * Returns {} if the model is not in any known family.
+ */
+function getModelApiParams(modelName) {
+    if (!modelName) return {};
+    const lower = modelName.toLowerCase();
+    for (const family of MODEL_FAMILIES) {
+        if (family.match(lower)) return family.apiParams || {};
+    }
+    return {};
+}
+
 // ─── Skill Protocol: JSON lines on stdout, human text on stderr ──────────────
 
 /**
@@ -226,6 +286,10 @@ async function llmCall(messages, opts = {}) {
     // Sending max_tokens to thinking models (Qwen3.5) starves actual output since
     // reasoning_content counts against the limit.
 
+    // Lookup model-family-specific extra params (e.g. reasoning_effort for Mistral).
+    // VLM calls skip the LLM family table — VLM models are always local llava-compatible.
+    const modelFamilyParams = opts.vlm ? {} : getModelApiParams(model || LLM_MODEL);
+
     // Build request params
     const params = {
         messages,
@@ -238,6 +302,9 @@ async function llmCall(messages, opts = {}) {
         ...(opts.expectJSON && opts.temperature === undefined && { temperature: 0.7 }),
         ...(opts.expectJSON && { top_p: 0.8 }),
         ...(opts.tools && { tools: opts.tools }),
+        // Model-family-specific params (e.g. reasoning_effort:'none' for Mistral).
+        // These are merged last so they take precedence over defaults.
+        ...modelFamilyParams,
     };
 
     // Use an AbortController with idle timeout that resets on each streamed chunk.
@@ -297,7 +364,11 @@ async function llmCall(messages, opts = {}) {
             const delta = chunk.choices?.[0]?.delta;
             if (delta?.content) content += delta.content;
             if (delta?.reasoning_content) reasoningContent += delta.reasoning_content;
-            if (delta?.content || delta?.reasoning_content) {
+            // Fallback: Mistral Small 4 in llama-server may route thinking tokens through
+            // `delta.thinking` even when reasoning_effort=none is requested (llama.cpp
+            // compatibility varies by version). Capture it so the idle timer resets.
+            if (delta?.thinking) reasoningContent += delta.thinking;
+            if (delta?.content || delta?.reasoning_content || delta?.thinking) {
                 tokenCount++;
                 // Capture TTFT on first content/reasoning token
                 if (!firstTokenTime) firstTokenTime = Date.now();
@@ -2347,8 +2418,61 @@ async function main() {
         emit({ event: 'error', message: `Cannot reach LLM endpoint: ${err.message}` });
         process.exit(IS_SKILL_MODE ? 0 : 1);
     }
+    // ── Streaming sanity check ────────────────────────────────────────────────
+    // Fires a tiny streaming call to verify the model actually produces content.
+    // Catches the Mistral "token-loop" bug: server started with a Qwen-specific
+    // --chat-template-kwargs flag causes Mistral to emit only empty token ID 31
+    // on every chunk, giving 0 content tokens for every test.
+    //
+    // This check saves ~30 minutes of doomed benchmark runs by failing fast.
+    log('\n  🔍 Streaming sanity check (10 tokens)...');
+    try {
+        const warmupParams = {
+            ...(LLM_MODEL && { model: LLM_MODEL }),
+            messages: [{ role: 'user', content: 'Reply with just the word: hello' }],
+            stream: true,
+            max_tokens: 10,
+            ...getModelApiParams(LLM_MODEL),
+        };
+        const warmupStream = await llmClient.chat.completions.create(warmupParams);
+        let warmupContent = '';
+        let warmupChunks = 0;
+        const warmupController = new AbortController();
+        const warmupTimeout = setTimeout(() => warmupController.abort(), 15000);
+        try {
+            for await (const chunk of warmupStream) {
+                warmupChunks++;
+                const d = chunk.choices?.[0]?.delta;
+                if (d?.content) warmupContent += d.content;
+                if (d?.reasoning_content) warmupContent += d.reasoning_content;
+                if (d?.thinking) warmupContent += d.thinking;
+                if (warmupChunks >= 30) break; // enough chunks to decide
+            }
+        } finally {
+            clearTimeout(warmupTimeout);
+        }
 
-    // Collect system info
+        if (warmupContent.trim().length === 0) {
+            // Model produced chunks but zero content — server is in a bad state
+            const modelName = results.model.name || LLM_MODEL || 'current model';
+            log(`\n  ❌ STREAMING SANITY CHECK FAILED`);
+            log(`     The model (${modelName}) produced ${warmupChunks} stream chunks but 0 content tokens.`);
+            log(`     This usually means the llama-server was started with an incompatible`);
+            log(`     --chat-template-kwargs flag (e.g. Qwen's enable_thinking:false applied to Mistral).`);
+            log(`\n  ➡  Fix: Reload the model in Aegis-AI to restart the llama-server with`);
+            log(`          the correct flags for this model family.`);
+            log(`          Mistral requires: --reasoning-budget 0`);
+            log(`          Qwen requires:    --chat-template-kwargs '{"enable_thinking":false}'\n`);
+            emit({ event: 'error', message: `Streaming sanity failed: ${warmupChunks} chunks, 0 content tokens. Reload the model in Aegis-AI to fix.` });
+            process.exit(IS_SKILL_MODE ? 0 : 1);
+        }
+
+        log(`  ✅ Streaming OK — ${warmupContent.trim().split(/\s+/).length} words, ${warmupChunks} chunks`);
+    } catch (err) {
+        // Non-fatal — if warmup errors, let the benchmark try; individual tests will surface the issue
+        log(`  ⚠️  Streaming warmup error (non-fatal): ${err.message}`);
+    }
+
     results.system = collectSystemInfo();
     log(`  System:   ${results.system.cpu} (${results.system.cpuCores} cores)`);
     log(`  Memory:   ${results.system.freeMemoryGB}GB free / ${results.system.totalMemoryGB}GB total`);
