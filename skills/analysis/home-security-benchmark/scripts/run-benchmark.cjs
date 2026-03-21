@@ -155,29 +155,43 @@ const MODEL_FAMILIES = [
         // Supported by both Mistral cloud API and llama-server (forwarded as chat template kwarg).
         // Without this Mistral routes ALL output to delta.thinking, causing 30s idle timeouts.
         apiParams: { reasoning_effort: 'none' },
-        serverFlags: '--reasoning-budget 0',
+        serverFlags: '--chat-template-kwargs {"reasoning_effort":"none"} --parallel 1',
+    },
+    {
+        name: 'Nemotron',
+        // NVIDIA Nemotron-3-Nano (4B, 30B) — rejects temperature < 1.0 with HTTP 400:
+        // "Unsupported value: 'temperature' does not support 0.1 with this model"
+        match: (m) => m.includes('nemotron'),
+        apiParams: {},
+        minTemperature: 1.0,
+    },
+    {
+        name: 'LFM',
+        // Liquid LFM2 / LFM2.5 — same temperature restriction as Nemotron
+        match: (m) => m.includes('lfm'),
+        apiParams: {},
+        minTemperature: 1.0,
     },
     // Qwen3.5 thinking is handled via prompt-level /no_think and the 500-token reasoning
     // abort in llmCall — no extra per-request params needed.
-    // {
-    //   name: 'Qwen3',
-    //   match: (m) => m.includes('qwen') || m.includes('qwq'),
-    //   apiParams: {},  // could add: { chat_template_kwargs: { enable_thinking: false } }
-    //   serverFlags: "--chat-template-kwargs '{\"enable_thinking\":false}'",
-    // },
 ];
 
 /**
- * Return the merged extra API params for the given model name.
+ * Return the matched MODEL_FAMILIES entry for the given model name.
  * Returns {} if the model is not in any known family.
  */
-function getModelApiParams(modelName) {
+function getModelFamily(modelName) {
     if (!modelName) return {};
     const lower = modelName.toLowerCase();
     for (const family of MODEL_FAMILIES) {
-        if (family.match(lower)) return family.apiParams || {};
+        if (family.match(lower)) return family;
     }
     return {};
+}
+
+/** Return extra API params for the model (e.g. reasoning_effort for Mistral). */
+function getModelApiParams(modelName) {
+    return getModelFamily(modelName).apiParams || {};
 }
 
 // ─── Skill Protocol: JSON lines on stdout, human text on stderr ──────────────
@@ -286,9 +300,19 @@ async function llmCall(messages, opts = {}) {
     // Sending max_tokens to thinking models (Qwen3.5) starves actual output since
     // reasoning_content counts against the limit.
 
-    // Lookup model-family-specific extra params (e.g. reasoning_effort for Mistral).
+    // Lookup model-family-specific config (e.g. reasoning_effort for Mistral,
+    // minTemperature for Nemotron/LFM2).
     // VLM calls skip the LLM family table — VLM models are always local llava-compatible.
-    const modelFamilyParams = opts.vlm ? {} : getModelApiParams(model || LLM_MODEL);
+    const modelFamily = opts.vlm ? {} : getModelFamily(model || LLM_MODEL);
+    const modelFamilyParams = modelFamily.apiParams || {};
+
+    // Resolve temperature: apply model-specific minimum if needed.
+    // Nemotron and LFM2 reject temperature < 1.0 with HTTP 400.
+    let temperature = opts.temperature;
+    if (temperature === undefined && opts.expectJSON) temperature = 0.7;
+    if (temperature !== undefined && modelFamily.minTemperature !== undefined) {
+        temperature = Math.max(temperature, modelFamily.minTemperature);
+    }
 
     // Build request params
     const params = {
@@ -298,8 +322,7 @@ async function llmCall(messages, opts = {}) {
         // llama-server crashes with "Failed to parse input" when stream_options is present)
         ...(isCloudApi && { stream_options: { include_usage: true } }),
         ...(model && { model }),
-        ...(opts.temperature !== undefined && { temperature: opts.temperature }),
-        ...(opts.expectJSON && opts.temperature === undefined && { temperature: 0.7 }),
+        ...(temperature !== undefined && { temperature }),
         ...(opts.expectJSON && { top_p: 0.8 }),
         ...(opts.tools && { tools: opts.tools }),
         // Model-family-specific params (e.g. reasoning_effort:'none' for Mistral).
