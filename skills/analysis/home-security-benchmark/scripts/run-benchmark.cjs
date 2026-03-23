@@ -174,6 +174,15 @@ const MODEL_FAMILIES = [
     },
     // Qwen3.5 thinking is handled via prompt-level /no_think and the 500-token reasoning
     // abort in llmCall — no extra per-request params needed.
+    {
+        name: 'GPT-OSS',
+        // gpt-oss-20b uses <|channel|>analysis/final structure.
+        // reasoning_effort=none hints the model to minimize analysis (injected into system prompt
+        // by the chat template). The mlx-server OutputFilter suppresses analysis at token ID level.
+        match: (m) => m.includes('gpt-oss'),
+        apiParams: { reasoning_effort: 'none' },
+        serverFlags: '--chat-template-kwargs {"reasoning_effort":"none"}',
+    },
 ];
 
 /**
@@ -391,13 +400,15 @@ async function llmCall(messages, opts = {}) {
             // `delta.thinking` even when reasoning_effort=none is requested (llama.cpp
             // compatibility varies by version). Capture it so the idle timer resets.
             if (delta?.thinking) reasoningContent += delta.thinking;
-            if (delta?.content || delta?.reasoning_content || delta?.thinking) {
+            // mlx-lm Python server uses `delta.reasoning` instead of `delta.reasoning_content`
+            if (delta?.reasoning) reasoningContent += delta.reasoning;
+            if (delta?.content || delta?.reasoning_content || delta?.thinking || delta?.reasoning) {
                 tokenCount++;
                 // Capture TTFT on first content/reasoning token
                 if (!firstTokenTime) firstTokenTime = Date.now();
                 // Buffer and log tokens — tag with field source
                 const isContent = !!delta?.content;
-                const tok = delta?.content || delta?.reasoning_content || '';
+                const tok = delta?.content || delta?.reasoning_content || delta?.reasoning || '';
                 // Tag first token of each field type
                 if (tokenCount === 1) tokenBuffer += isContent ? '[C] ' : '[R] ';
                 tokenBuffer += tok;
@@ -526,10 +537,19 @@ async function llmCall(messages, opts = {}) {
         if (decodeTokensPerSec !== null) results.perfTotals.decodeTokensPerSec.push(decodeTokensPerSec);
 
         // Capture model name from first response
+        // MLX server returns the full filesystem path as model name
+        // e.g. /Users/simba/.aegis-ai/models/mlx_models/mlx-community/Qwen3.5-9B-8bit
+        // Strip to just the org/model portion: mlx-community/Qwen3.5-9B-8bit
+        const cleanName = (n) => {
+            if (!n || !n.includes('/')) return n;
+            const parts = n.split('/');
+            // If it looks like a filesystem path (>3 segments), keep last 2 (org/model)
+            return parts.length > 3 ? parts.slice(-2).join('/') : n;
+        };
         if (opts.vlm) {
-            if (!results.model.vlm && model) results.model.vlm = model;
+            if (!results.model.vlm && model) results.model.vlm = cleanName(model);
         } else {
-            if (!results.model.name && model) results.model.name = model;
+            if (!results.model.name && model) results.model.name = cleanName(model);
         }
 
         return { content, toolCalls, usage: callTokens, perf: callPerf, model };
@@ -545,6 +565,11 @@ function stripThink(text) {
     // Strip Qwen3.5 'Thinking Process:' blocks (outputs plain text reasoning
     // instead of <think> tags when enable_thinking is active)
     cleaned = cleaned.replace(/^Thinking Process[:\s]*[\s\S]*?(?=\n\s*[{\[]|\n```|$)/i, '').trim();
+    // Strip gpt-oss <|channel|>...<|message|> routing tokens
+    // e.g. "<|channel|>analysis<|message|>We need to decide..." → "We need to decide..."
+    cleaned = cleaned.replace(/^<\|channel\|>[^<]*<\|message\|>/i, '').trim();
+    // Strip any remaining <|...|> special tokens (end_turn, etc.)
+    cleaned = cleaned.replace(/<\|[^|]+\|>/g, '').trim();
     return cleaned;
 }
 
@@ -555,14 +580,18 @@ function parseJSON(text) {
     if (codeBlock) {
         jsonStr = codeBlock[1];
     } else {
-        // Find first { or [ and extract balanced JSON
-        const startIdx = cleaned.search(/[{\[]/); 
-        if (startIdx >= 0) {
+        // Extract ALL balanced JSON objects/arrays, then pick the largest.
+        // Some models (gpt-oss) emit an empty `{}` prefix before the real JSON.
+        const candidates = [];
+        let searchFrom = 0;
+        while (searchFrom < cleaned.length) {
+            const sub = cleaned.slice(searchFrom);
+            const startOff = sub.search(/[{\[]/);
+            if (startOff < 0) break;
+            const startIdx = searchFrom + startOff;
             const opener = cleaned[startIdx];
             const closer = opener === '{' ? '}' : ']';
-            let depth = 0;
-            let inString = false;
-            let escape = false;
+            let depth = 0, inString = false, escape = false, endIdx = -1;
             for (let i = startIdx; i < cleaned.length; i++) {
                 const ch = cleaned[i];
                 if (escape) { escape = false; continue; }
@@ -570,9 +599,19 @@ function parseJSON(text) {
                 if (ch === '"') { inString = !inString; continue; }
                 if (!inString) {
                     if (ch === opener) depth++;
-                    else if (ch === closer) { depth--; if (depth === 0) { jsonStr = cleaned.slice(startIdx, i + 1); break; } }
+                    else if (ch === closer) { depth--; if (depth === 0) { endIdx = i; break; } }
                 }
             }
+            if (endIdx >= 0) {
+                candidates.push(cleaned.slice(startIdx, endIdx + 1));
+                searchFrom = endIdx + 1;
+            } else {
+                break;
+            }
+        }
+        // Prefer the longest candidate (most likely the real response)
+        if (candidates.length > 0) {
+            jsonStr = candidates.reduce((a, b) => a.length >= b.length ? a : b);
         }
     }
     // Clean common local model artifacts before parsing:
@@ -592,7 +631,12 @@ function parseJSON(text) {
             .replace(/"placeholder"(\s*"placeholder")*/g, '"placeholder"')  // collapse repeated placeholders
             .replace(/\bplaceholder\b/g, '""')        // placeholder → empty string
             .replace(/,\s*([}\]])/g, '$1');            // re-clean trailing commas
-        return JSON.parse(aggressive.trim());
+        try {
+            return JSON.parse(aggressive.trim());
+        } catch (secondErr) {
+            // Include raw content in error for diagnostics
+            throw new Error(`${secondErr.message} | raw(120): "${(text || '').slice(0, 120)}"`);
+        }
     }
 }
 
@@ -646,6 +690,38 @@ function sampleResourceMetrics() {
     return sample;
 }
 
+/**
+ * Aggregate resource samples to produce a representative summary.
+ * Uses PEAK GPU utilization (since point-in-time samples often miss active inference)
+ * and MAX GPU memory (high-water mark during the benchmark run).
+ */
+function aggregateResourceSamples(samples) {
+    if (!samples || samples.length === 0) return null;
+    const gpuSamples = samples.filter(s => s.gpu);
+    if (gpuSamples.length === 0) {
+        // No GPU data — return last sample for sys memory at least
+        return samples[samples.length - 1];
+    }
+    // Find peak GPU utilization sample
+    const peakGpu = gpuSamples.reduce((best, s) =>
+        (s.gpu.util > (best.gpu?.util ?? -1)) ? s : best, gpuSamples[0]);
+    // Find max GPU memory sample
+    const maxMem = gpuSamples.reduce((best, s) =>
+        ((s.gpu.memUsedGB || 0) > (best.gpu?.memUsedGB || 0)) ? s : best, gpuSamples[0]);
+    // Use the last sample for system memory (most recent)
+    const lastSample = samples[samples.length - 1];
+    return {
+        ...lastSample,
+        gpu: {
+            util: peakGpu.gpu.util,
+            renderer: peakGpu.gpu.renderer,
+            tiler: peakGpu.gpu.tiler,
+            memUsedGB: maxMem.gpu.memUsedGB,
+            memAllocGB: maxMem.gpu.memAllocGB,
+        },
+    };
+}
+
 // ─── Live progress: intermediate saves + report regeneration ────────────────
 let _liveReportOpened = false;
 let _runStartedAt = null;     // Set when runSuites() begins
@@ -697,7 +773,7 @@ function saveLiveProgress(startedAt, suitesCompleted, totalSuites, nextSuiteName
                 prefillTokensPerSec: results.perfTotals.prefillTokensPerSec,
                 decodeTokensPerSec: results.perfTotals.serverDecodeTokensPerSec,
             },
-            resource: results.resourceSamples.length > 0 ? results.resourceSamples[results.resourceSamples.length - 1] : null,
+            resource: aggregateResourceSamples(results.resourceSamples),
         } : null;
 
         // Preserve previous runs in index for comparison sidebar
@@ -2454,7 +2530,7 @@ async function main() {
             ...(LLM_MODEL && { model: LLM_MODEL }),
             messages: [{ role: 'user', content: 'Reply with just the word: hello' }],
             stream: true,
-            max_tokens: 10,
+            max_tokens: 200,  // models with thinking/analysis phases need >10 tokens to reach final output
             ...getModelApiParams(LLM_MODEL),
         };
         const warmupStream = await llmClient.chat.completions.create(warmupParams);
@@ -2615,7 +2691,7 @@ async function main() {
         tokens: results.tokenTotals.total,
         perfSummary: {
             ...(results.perfSummary || {}),
-            resource: results.resourceSamples?.length > 0 ? results.resourceSamples[results.resourceSamples.length - 1] : null,
+            resource: aggregateResourceSamples(results.resourceSamples),
         },
     });
     fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
