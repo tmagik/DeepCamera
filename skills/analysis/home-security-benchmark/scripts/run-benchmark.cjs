@@ -2545,6 +2545,7 @@ async function main() {
                 if (d?.content) warmupContent += d.content;
                 if (d?.reasoning_content) warmupContent += d.reasoning_content;
                 if (d?.thinking) warmupContent += d.thinking;
+                if (d?.reasoning) warmupContent += d.reasoning;
                 if (warmupChunks >= 30) break; // enough chunks to decide
             }
         } finally {
