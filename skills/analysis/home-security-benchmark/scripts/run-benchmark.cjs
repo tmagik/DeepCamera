@@ -387,6 +387,9 @@ async function llmCall(messages, opts = {}) {
         let tokenCount = 0;
         let tokenBuffer = '';
         let firstTokenTime = null;  // For TTFT measurement
+        // For JSON-expected tests: track whether we've seen the start of JSON content.
+        // Until we see '{' or '[', everything in delta.content is treated as reasoning.
+        let jsonContentStarted = !opts.expectJSON;  // true immediately for non-JSON tests
 
         for await (const chunk of stream) {
             resetIdle();
@@ -394,7 +397,42 @@ async function llmCall(messages, opts = {}) {
             if (chunk.model) model = chunk.model;
 
             const delta = chunk.choices?.[0]?.delta;
-            if (delta?.content) content += delta.content;
+            if (delta?.content) {
+                if (jsonContentStarted) {
+                    // Already in content mode — accumulate normally
+                    content += delta.content;
+                } else {
+                    // JSON test: haven't seen JSON start yet.
+                    // Check if this chunk contains the start of JSON.
+                    // First strip any <think>...</think> blocks.
+                    const cleaned = (content + delta.content)
+                        .replace(/<think>[\s\S]*?<\/think>\s*/gi, '')
+                        .trimStart();
+                    const jsonIdx = cleaned.search(/[{\[]/);
+                    if (jsonIdx >= 0) {
+                        // Found JSON start — split: everything before is reasoning,
+                        // everything from JSON start onwards is content.
+                        jsonContentStarted = true;
+                        const allText = content + delta.content;
+                        // Find the actual position in the raw text
+                        const rawCleaned = allText.replace(/<think>[\s\S]*?<\/think>\s*/gi, '');
+                        const rawJsonIdx = rawCleaned.search(/[{\[]/);
+                        if (rawJsonIdx >= 0) {
+                            const thinkingPart = rawCleaned.slice(0, rawJsonIdx);
+                            const contentPart = rawCleaned.slice(rawJsonIdx);
+                            if (thinkingPart.trim()) reasoningContent += thinkingPart;
+                            content = contentPart;
+                        } else {
+                            content = allText;
+                        }
+                    } else {
+                        // Still no JSON — accumulate as reasoning
+                        reasoningContent += delta.content;
+                        // Keep the raw content in a temp buffer for the split logic above
+                        content += delta.content;
+                    }
+                }
+            }
             if (delta?.reasoning_content) reasoningContent += delta.reasoning_content;
             // Fallback: Mistral Small 4 in llama-server may route thinking tokens through
             // `delta.thinking` even when reasoning_effort=none is requested (llama.cpp
@@ -407,7 +445,7 @@ async function llmCall(messages, opts = {}) {
                 // Capture TTFT on first content/reasoning token
                 if (!firstTokenTime) firstTokenTime = Date.now();
                 // Buffer and log tokens — tag with field source
-                const isContent = !!delta?.content;
+                const isContent = !!delta?.content && jsonContentStarted;
                 const tok = delta?.content || delta?.reasoning_content || delta?.reasoning || '';
                 // Tag first token of each field type
                 if (tokenCount === 1) tokenBuffer += isContent ? '[C] ' : '[R] ';
@@ -428,18 +466,10 @@ async function llmCall(messages, opts = {}) {
                     controller.abort();
                     break;
                 }
-                // If content is arriving, check it starts with JSON.
-                // Be patient with thinking models: llama-server sends reasoning
-                // as plain text in delta.content (no <think> tags or separate
-                // reasoning field). Wait for enough content before deciding.
-                if (opts.expectJSON && isContent && content.length >= 200) {
-                    // Strip <think> blocks AND common plain-text reasoning prefixes
-                    // that thinking models (Qwen3.5, etc.) emit before JSON output
-                    let stripped = content.replace(/<think>[\s\S]*?<\/think>\s*/gi, '').trimStart();
-                    // Strip leading plain-text reasoning (models often start with
-                    // "Let me analyze...", "I need to...", followed by actual JSON)
-                    stripped = stripped.replace(/^(?:Let me|I need to|I'll|I will|First,|Okay,|Sure,|Alright,|Here's|Looking at|Analyzing)[\s\S]*?(?=\s*[{\[])/i, '').trimStart();
-                    if (stripped.length >= 200 && !/^\s*[{\[]/.test(stripped)) {
+                // If we have actual JSON content, verify it looks valid
+                if (opts.expectJSON && jsonContentStarted && content.length >= 50) {
+                    const stripped = content.trimStart();
+                    if (stripped.length >= 50 && !/^\s*[{\[]/.test(stripped)) {
                         log(`    ⚠ Aborting: expected JSON but got: "${stripped.slice(0, 80)}…"`);
                         controller.abort();
                         break;
@@ -481,6 +511,13 @@ async function llmCall(messages, opts = {}) {
 
         // Flush remaining token buffer
         if (tokenBuffer) log(tokenBuffer);
+
+        // If JSON was expected but never found in content, the content is all thinking text.
+        // Clear it so the reasoning fallback below can extract JSON from reasoningContent.
+        if (opts.expectJSON && !jsonContentStarted) {
+            log(`    💭 Model produced ${tokenCount} thinking tokens, no JSON content yet — checking reasoning for JSON`);
+            content = '';
+        }
 
         // If the model only produced reasoning_content (thinking) with no content,
         // use the reasoning output as the response content for evaluation purposes.
