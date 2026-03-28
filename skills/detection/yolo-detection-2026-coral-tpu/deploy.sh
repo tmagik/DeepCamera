@@ -32,52 +32,9 @@ ask_sudo() {
         return $?
     fi
 
-    echo ""
-    echo -e "\033[1;33m[SUDO REQUIRED]\033[0m Aegis needs administrator privileges to $desc."
-    echo "A secure native OS authorization window should appear shortly."
-    echo "If it does not appear or you cancel the prompt, manual fallback instructions will be provided."
-    echo ""
-    
-    local success=0
-    
-    if [ "$PLATFORM" = "Darwin" ]; then
-        # Use native macOS GUI authorization with an interactive prelude dialog
-        local apple_script="
-            try
-                set dialogMessage to \"Aegis requires Admin Privileges to install Native drivers:\n\n$cmd\n\nIf approved, a secure OS dialog will request your password. Aegis is blind to your input.\n\nIf you prefer to execute this manually, choose 'Manual Install'.\"
-                set userChoice to button returned of (display dialog dialogMessage buttons {\"Manual Install\", \"Approve\"} default button \"Approve\" with title \"Aegis Hardware Setup\" with icon caution)
-                
-                if userChoice is \"Approve\" then
-                    do shell script \"$cmd\" with administrator privileges
-                    return 0
-                else
-                    error \"User declined\"
-                end if
-            on error
-                error \"Action failed or cancelled\"
-            end try
-        "
-        
-        if ! osascript -e "$apple_script" >/dev/null 2>&1; then
-            success=1
-        fi
-    elif [ "$PLATFORM" = "Linux" ]; then
-        # Check if pkexec is available for native Linux GUI authorization
-        if command -v pkexec &>/dev/null; then
-            if ! pkexec bash -c "$cmd" >/dev/null 2>&1; then
-                success=1
-            fi
-        else
-            # Fallback to sudo if run within an interactive TTY
-            if ! sudo -v &>/dev/null || ! eval "sudo $cmd"; then
-                success=1
-            fi
-        fi
+    if eval "sudo $cmd"; then
+        return 0
     else
-        success=1
-    fi
-
-    if [ "$success" -ne 0 ]; then
         echo ""
         echo -e "\033[1;31m[MANUAL SETUP REQUIRED]\033[0m Sudo prompt was skipped or user aborted."
         echo "Please execute the following fragile instructions manually in a global OS terminal:"
@@ -122,8 +79,9 @@ elif [ "$PLATFORM" = "Darwin" ]; then
     if [ "$ARCH" = "arm64" ]; then
         MANUAL_MAC="curl -sSLO https://github.com/feranick/libedgetpu/releases/download/16.0TF2.19.1-1/libedgetpu-16.0-tf2.19.1-1_MacOS_Silicon.zip
 unzip -q -o libedgetpu-16.0-tf2.19.1-1_MacOS_Silicon.zip
-sudo mkdir -p /usr/local/lib
+sudo mkdir -p /usr/local/lib /opt/homebrew/lib
 sudo cp libedgetpu.1.dylib /usr/local/lib/
+sudo cp libedgetpu.1.dylib /opt/homebrew/lib/
 rm -rf libedgetpu*"
 
         log "Downloading Apple Silicon arm64 driver payload..."
@@ -131,7 +89,7 @@ rm -rf libedgetpu*"
         cd "$TMP_DIR"
         curl -sSLO https://github.com/feranick/libedgetpu/releases/download/16.0TF2.19.1-1/libedgetpu-16.0-tf2.19.1-1_MacOS_Silicon.zip
         unzip -q -o libedgetpu-16.0-tf2.19.1-1_MacOS_Silicon.zip
-        ask_sudo "mkdir -p /usr/local/lib && cp libedgetpu.1.dylib /usr/local/lib/" "Install libedgetpu.1.dylib to /usr/local/lib" "$MANUAL_MAC"
+        ask_sudo "mkdir -p /usr/local/lib /opt/homebrew/lib && cp libedgetpu.1.dylib /usr/local/lib/ && cp libedgetpu.1.dylib /opt/homebrew/lib/" "Install libedgetpu.1.dylib to /usr/local/lib and /opt/homebrew/lib" "$MANUAL_MAC"
         cd "$SKILL_DIR"
         rm -rf "$TMP_DIR"
     else
