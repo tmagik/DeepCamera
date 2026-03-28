@@ -32,11 +32,13 @@ function main() {
 
   // Shared memory volume for video frames
   const path = require('node:path');
-  const sharedMemoryHost = path.join(os.tmpdir(), 'aegis_detection');
+  const sharedMemoryHost = path.join(os.tmpdir(), 'aegis-detection-frames');
   if (!fs.existsSync(sharedMemoryHost)) {
     fs.mkdirSync(sharedMemoryHost, { recursive: true });
   }
-  args.push('-v', `${sharedMemoryHost}:/tmp/aegis_detection`);
+  // Map the host path to the EXACT same absolute path inside the container
+  // This allows the raw JSON `frame_path` from Aegis to work without translation.
+  args.push('-v', `${sharedMemoryHost}:${sharedMemoryHost}`);
 
   // Pass through Aegis parameters and ID dynamically
   for (const [key, val] of Object.entries(process.env)) {
