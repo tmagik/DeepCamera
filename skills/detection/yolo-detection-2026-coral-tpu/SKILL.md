@@ -3,7 +3,7 @@ name: yolo-detection-2026-coral-tpu
 description: "Google Coral Edge TPU — real-time object detection via Docker"
 version: 1.0.0
 icon: assets/icon.png
-entry: scripts/detect.py
+entry: scripts/monitor.js
 deploy: deploy.sh
 runtime: docker
 

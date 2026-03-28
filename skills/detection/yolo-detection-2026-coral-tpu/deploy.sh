@@ -113,25 +113,16 @@ else
     emit '{"event": "progress", "stage": "probe", "message": "No Edge TPU detected — CPU fallback available"}'
 fi
 
-# ─── Step 5: Build run command ───────────────────────────────────────────────
-
-# The run command Aegis will use to launch the skill
-# stdin/stdout pipe (-i), auto-remove (--rm), shared volume
-RUN_CMD="$DOCKER_CMD run -i --rm $USB_FLAG"
-RUN_CMD="$RUN_CMD -v /tmp/aegis_detection:/tmp/aegis_detection"
-RUN_CMD="$RUN_CMD --env AEGIS_SKILL_ID --env AEGIS_SKILL_PARAMS --env PYTHONUNBUFFERED=1"
-RUN_CMD="$RUN_CMD $IMAGE_NAME:$IMAGE_TAG"
-
-log "Runtime command: $RUN_CMD"
+# ─── Step 5: Complete ────────────────────────────────────────────────────────
 
 # ─── Step 6: Complete ────────────────────────────────────────────────────────
 
 if [ "$TPU_FOUND" = true ]; then
-    emit "{\"event\": \"complete\", \"status\": \"success\", \"tpu_found\": true, \"run_command\": \"$RUN_CMD\", \"message\": \"Coral TPU skill installed — Edge TPU ready\"}"
+    emit "{\"event\": \"complete\", \"status\": \"success\", \"tpu_found\": true, \"message\": \"Coral TPU skill installed — Edge TPU ready\"}"
     log "Done! Edge TPU ready."
     exit 0
 else
-    emit "{\"event\": \"complete\", \"status\": \"partial\", \"tpu_found\": false, \"run_command\": \"$RUN_CMD\", \"message\": \"Coral TPU skill installed — no TPU detected (CPU fallback)\"}"
+    emit "{\"event\": \"complete\", \"status\": \"partial\", \"tpu_found\": false, \"message\": \"Coral TPU skill installed — no TPU detected (CPU fallback)\"}"
     log "Done with warning: no TPU detected. Connect Coral USB and restart."
     exit 2
 fi

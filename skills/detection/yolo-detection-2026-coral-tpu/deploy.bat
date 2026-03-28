@@ -61,11 +61,7 @@ if %errorlevel% equ 0 (
     echo {"event": "progress", "stage": "probe", "message": "No Edge TPU detected - CPU fallback"}
 )
 
-REM ─── Step 4: Set run command ──────────────────────────────────────────────
-
-set "RUN_CMD=docker run -i --rm --privileged -v /tmp/aegis_detection:/tmp/aegis_detection --env AEGIS_SKILL_ID --env AEGIS_SKILL_PARAMS --env PYTHONUNBUFFERED=1 %IMAGE_NAME%:%IMAGE_TAG%"
-
-echo {"event": "complete", "status": "success", "run_command": "%RUN_CMD%", "message": "Coral TPU skill installed"}
+echo {"event": "complete", "status": "success", "message": "Coral TPU skill installed"}
 
 echo %LOG_PREFIX% Done! 1>&2
 exit /b 0
