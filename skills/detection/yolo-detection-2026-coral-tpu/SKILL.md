@@ -1,15 +1,14 @@
 ---
 name: yolo-detection-2026-coral-tpu
-description: "Google Coral Edge TPU — real-time object detection with LiteRT"
-version: 2.0.0
+description: "Google Coral Edge TPU — real-time object detection via Docker"
+version: 1.0.0
 icon: assets/icon.png
 entry: scripts/detect.py
 deploy: deploy.sh
+runtime: docker
 
 requirements:
-  python: ">=3.9"
-  ai-edge-litert: ">=2.1.0"
-  system: "libedgetpu"
+  docker: ">=20.10"
   platforms: ["linux", "macos", "windows"]
 
 parameters:
@@ -79,56 +78,59 @@ mutex: detection
 
 # Coral TPU Object Detection
 
-Real-time object detection using Google Coral Edge TPU accelerator. Uses [ai-edge-litert](https://pypi.org/project/ai-edge-litert/) (LiteRT — the modern successor to TFLite/pycoral) with the `libedgetpu` delegate for hardware acceleration. Detects 80 COCO classes with ~4ms inference on 320×320 input.
+Real-time object detection using Google Coral Edge TPU accelerator. Runs inside Docker for cross-platform support. Detects 80 COCO classes (person, car, dog, cat, etc.) with ~4ms inference on 320×320 input.
 
 ## Requirements
 
 - **Google Coral USB Accelerator** (USB 3.0 port recommended)
-- **Python 3.9+** (3.9–3.13 supported via ai-edge-litert)
-- **libedgetpu** system library (installed per platform, see below)
+- **Docker Desktop 4.35+** (all platforms — Linux, macOS, Windows)
+- USB 3.0 cable (the included cable is recommended)
 - Adequate cooling for sustained inference
 
 ## How It Works
 
-1. `deploy.sh` creates a Python venv, installs `ai-edge-litert`, and checks for `libedgetpu`
-2. Aegis writes camera frame JPEG to shared `/tmp/aegis_detection/` directory
-3. Sends `frame` event via stdin JSONL to `detect.py`
-4. `detect.py` loads the Edge TPU delegate via `litert.load_delegate('libedgetpu')`
-5. Returns `detections` event via stdout JSONL
-6. Same protocol as `yolo-detection-2026` — Aegis sees no difference
+```
+┌─────────────────────────────────────────────────────┐
+│ Host (Aegis-AI)                                     │
+│   frame.jpg → /tmp/aegis_detection/                 │
+│   stdin  ──→ ┌──────────────────────────────┐       │
+│              │ Docker Container              │       │
+│              │   detect.py                   │       │
+│              │   ├─ loads _edgetpu.tflite     │       │
+│              │   ├─ reads frame from volume   │       │
+│              │   └─ runs inference on TPU    │       │
+│   stdout ←── │   → JSONL detections          │       │
+│              └──────────────────────────────┘       │
+│   USB ──→ /dev/bus/usb (Linux) or USB/IP (Mac/Win) │
+└─────────────────────────────────────────────────────┘
+```
+
+1. Aegis writes camera frame JPEG to shared `/tmp/aegis_detection/` volume
+2. Sends `frame` event via stdin JSONL to Docker container
+3. `detect.py` reads frame, runs inference on Edge TPU
+4. Returns `detections` event via stdout JSONL
+5. Same protocol as `yolo-detection-2026` — Aegis sees no difference
 
 ## Platform Setup
 
 ### Linux
 ```bash
-# 1. Install libedgetpu (deploy.sh auto-installs on Debian/Ubuntu)
-echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | \
-  sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-sudo apt-get update && sudo apt-get install libedgetpu1-std
-
-# 2. Connect Coral USB Accelerator, then:
+# USB Coral should be auto-detected
+# Docker uses --device /dev/bus/usb for direct access
 ./deploy.sh
 ```
 
-### macOS
+### macOS (Docker Desktop 4.35+)
 ```bash
-# 1. Install libedgetpu
-curl -LO https://github.com/google-coral/libedgetpu/releases/download/release-grouper/edgetpu_runtime_20221024.zip
-unzip edgetpu_runtime_20221024.zip && cd edgetpu_runtime && sudo bash install.sh
-
-# 2. Connect Coral USB Accelerator, then:
+# Docker Desktop USB/IP handles USB passthrough
+# ARM64 Docker image builds natively on Apple Silicon
 ./deploy.sh
 ```
 
 ### Windows
 ```powershell
-# 1. Install libedgetpu
-# Download edgetpu_runtime_20221024.zip from:
-#   https://github.com/google-coral/libedgetpu/releases
-# Extract and run install.bat
-
-# 2. Connect Coral USB Accelerator, then:
+# Docker Desktop 4.35+ with USB/IP support
+# Or WSL2 backend with usbipd-win
 .\deploy.bat
 ```
 
@@ -137,6 +139,7 @@ unzip edgetpu_runtime_20221024.zip && cd edgetpu_runtime && sudo bash install.sh
 Ships with pre-compiled `yolo26n_edgetpu.tflite` (YOLO 2026 nano, INT8 quantized, 320×320). To compile custom models:
 
 ```bash
+# Requires x86_64 Linux or Docker --platform linux/amd64
 python scripts/compile_model.py --model yolo26s --size 320
 ```
 
@@ -155,7 +158,7 @@ Same JSONL as `yolo-detection-2026`:
 
 ### Skill → Aegis (stdout)
 ```jsonl
-{"event": "ready", "model": "yolo26n_edgetpu", "device": "coral", "format": "edgetpu_tflite", "runtime": "ai-edge-litert", "tpu_count": 1, "classes": 80}
+{"event": "ready", "model": "yolo26n_edgetpu", "device": "coral", "format": "edgetpu_tflite", "tpu_count": 1, "classes": 80}
 {"event": "detections", "frame_id": 42, "camera_id": "front_door", "objects": [{"class": "person", "confidence": 0.85, "bbox": [100, 50, 300, 400]}]}
 {"event": "perf_stats", "total_frames": 50, "timings_ms": {"inference": {"avg": 4.1, "p50": 3.9, "p95": 5.2}}}
 ```
@@ -169,8 +172,4 @@ Same JSONL as `yolo-detection-2026`:
 ./deploy.sh
 ```
 
-The deployer creates a Python venv, installs `ai-edge-litert` and dependencies, checks for the `libedgetpu` system library, probes for Edge TPU devices, and sets the native `run_command`.
-
-### Docker (Optional)
-
-A `Dockerfile` is provided for environments where native installation is impractical. Note: Docker requires USB/IP passthrough for Edge TPU access on macOS and Windows.
+The deployer builds the Docker image locally, probes for TPU devices, and sets the runtime command. No packages pulled from external registries beyond Docker base images and Coral apt repo.
