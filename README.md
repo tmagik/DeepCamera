@@ -58,7 +58,7 @@ Each skill is a self-contained module with its own model, parameters, and [commu
 | Category | Skill | What It Does | Status |
 |----------|-------|--------------|:------:|
 | **Detection** | [`yolo-detection-2026`](skills/detection/yolo-detection-2026/) | Real-time 80+ class detection — auto-accelerated via TensorRT / CoreML / OpenVINO / ONNX | ✅|
-| | [`yolo-detection-2026-coral-tpu`](skills/detection/yolo-detection-2026-coral-tpu/) | Google Coral Edge TPU — ~4ms inference via USB accelerator ([LiteRT](#detection--segmentation-skills)) | 🧪 |
+| | [`yolo-detection-2026-coral-tpu`](skills/detection/yolo-detection-2026-coral-tpu/) | Google Coral Edge TPU — ~4ms inference via USB accelerator ([LiteRT](#detection--segmentation-skills)) | ✅ |
 | | [`yolo-detection-2026-openvino`](skills/detection/yolo-detection-2026-openvino/) | Intel NCS2 USB / Intel GPU / CPU — multi-device via OpenVINO ([architecture](#detection--segmentation-skills)) | 🧪 |
 | | `face-detection-recognition` | Face detection & recognition — identify known faces from camera feeds | 📐 |
 | | `license-plate-recognition` | License plate detection & recognition — read plate numbers from camera feeds | 📐 |
