@@ -122,6 +122,14 @@ if ! "$VENV_DIR/bin/python" -m pip install -r "$SKILL_DIR/requirements.txt"; the
     exit 1
 fi
 
+# ─── Download Pre-compiled Models ───────────────────────────────────────────
+emit '{"event": "progress", "stage": "build", "message": "Downloading Edge TPU models..."}'
+mkdir -p "$SKILL_DIR/models"
+cd "$SKILL_DIR/models"
+curl -sSLO "https://github.com/google-coral/edgetpu/raw/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite"
+curl -sSLO "https://github.com/google-coral/edgetpu/raw/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"
+cd "$SKILL_DIR"
+
 log "Linux deployment complete."
 
 # ─── Probe for Edge TPU devices ──────────────────────────────────────────────

@@ -116,7 +116,20 @@ if %errorlevel% neq 0 (
 
 echo %LOG_PREFIX% Dependencies installed successfully. 1>&2
 
-REM ─── Step 5: Probe for Edge TPU devices ────────────────────────────────────
+REM ─── Step 5: Download Pre-compiled Models ──────────────────────────────────
+
+echo %LOG_PREFIX% Downloading Edge TPU models... 1>&2
+echo {"event": "progress", "stage": "build", "message": "Downloading Edge TPU models..."}
+
+if not exist "%SKILL_DIR%models" mkdir "%SKILL_DIR%models"
+cd /d "%SKILL_DIR%models"
+
+powershell -Command "Invoke-WebRequest -Uri 'https://github.com/google-coral/edgetpu/raw/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite' -OutFile 'ssd_mobilenet_v2_coco_quant_postprocess.tflite'"
+powershell -Command "Invoke-WebRequest -Uri 'https://github.com/google-coral/edgetpu/raw/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite' -OutFile 'ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite'"
+
+cd /d "%SKILL_DIR%"
+
+REM ─── Step 6: Probe for Edge TPU devices ────────────────────────────────────
 
 echo %LOG_PREFIX% Probing for Edge TPU devices natively... 1>&2
 echo {"event": "progress", "stage": "probe", "message": "Checking for physical Edge TPU..."}
@@ -137,7 +150,7 @@ if %errorlevel% equ 0 (
     echo {"event": "progress", "stage": "probe", "message": "No Edge TPU detected -- CPU fallback available"}
 )
 
-REM ─── Step 6: Complete ──────────────────────────────────────────────────────
+REM ─── Step 7: Complete ──────────────────────────────────────────────────────
 
 if "!TPU_FOUND!"=="true" (
     echo {"event": "complete", "status": "success", "tpu_found": true, "message": "Native Coral TPU skill installed -- Edge TPU ready"}
