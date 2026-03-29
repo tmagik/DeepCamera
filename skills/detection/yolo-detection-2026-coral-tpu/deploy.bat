@@ -38,7 +38,8 @@ powershell -Command "Expand-Archive -Path 'edgetpu_runtime_20221024.zip' -Destin
 cd edgetpu_runtime
 
 echo %LOG_PREFIX% Prompting for Administrator rights to install drivers... 1>&2
-echo {"event": "progress", "stage": "platform", "message": "UAC required: Install Google Coral Edge TPU Windows Runtime"}
+echo {"event": "progress", "stage": "platform", "message": "A separate UAC prompt and blue terminal will appear. Please approve it."}
+echo {"event": "progress", "stage": "platform", "message": "Waiting for Google install.bat to finish..."}
 
 REM Start the official install script elevated. Wait for it to finish.
 powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'install.bat < nul' -Verb RunAs -Wait"
@@ -101,9 +102,9 @@ echo {"event": "progress", "stage": "build", "message": "Fetching pycoral specif
 
 "%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip >nul 2>&1
 
-"%VENV_DIR%\Scripts\python.exe" -m pip install --extra-index-url https://google-coral.github.io/py-repo/ pycoral~=2.0
+"%VENV_DIR%\Scripts\python.exe" "%SKILL_DIR%scripts\install_pycoral.py"
 if %errorlevel% neq 0 (
-    echo %LOG_PREFIX% WARNING: pip install pycoral failed. Will attempt to install standard requirements anyway. 1>&2
+    echo %LOG_PREFIX% WARNING: pycoral install script failed. 1>&2
 )
 
 "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%SKILL_DIR%requirements.txt"
