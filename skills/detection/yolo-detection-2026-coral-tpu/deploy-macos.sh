@@ -95,11 +95,12 @@ sudo bash install.sh"
     rm -rf "$TMP_DIR"
 fi
 
-# ─── Python venv + pycoral ───────────────────────────────────────────────────
-# macOS ships Python 3.9 via Homebrew or Xcode. PyCoral official wheels support <=3.9.
+# ─── Python venv + dependencies ─────────────────────────────────────────────
+# ai-edge-litert (the inference engine) supports Python 3.9-3.13.
+# No need to pin to Python 3.9 — use whatever python3 is available.
 PYTHON_CMD="python3"
 if ! command -v python3 &>/dev/null; then
-    emit '{"event": "error", "stage": "python", "message": "Python 3 not found. Install via: brew install python@3.9"}'
+    emit '{"event": "error", "stage": "python", "message": "Python 3 not found. Install via: brew install python"}'
     exit 1
 fi
 log "Using Python: $($PYTHON_CMD --version)"
@@ -110,13 +111,8 @@ emit '{"event": "progress", "stage": "build", "message": "Creating Python virtua
 
 "$VENV_DIR/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
 
-emit '{"event": "progress", "stage": "build", "message": "Installing PyCoral and dependencies..."}'
-if ! "$VENV_DIR/bin/python" -m pip install --extra-index-url https://google-coral.github.io/py-repo/ pycoral~=2.0; then
-    emit '{"event": "error", "stage": "build", "message": "pip install pycoral failed — ensure Python 3.9 is active (brew install python@3.9)"}'
-    exit 1
-fi
-
-if ! "$VENV_DIR/bin/python" -m pip install -r "$SKILL_DIR/requirements.txt"; then
+emit '{"event": "progress", "stage": "build", "message": "Installing dependencies (ai-edge-litert, numpy, Pillow)..."}'
+if ! "$VENV_DIR/bin/python" -m pip install --extra-index-url https://google-coral.github.io/py-repo/ -r "$SKILL_DIR/requirements.txt"; then
     emit '{"event": "error", "stage": "build", "message": "pip install requirements failed"}'
     exit 1
 fi

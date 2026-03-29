@@ -94,44 +94,13 @@ else
     exit 1
 fi
 
-# ─── Step 2: Find or install Python 3.9 ─────────────────────────────────────
-# PyCoral pip wheels are only available for Python 3.6–3.9 on Linux.
-# We lock to 3.9 regardless of the system Python version via pyenv.
-emit '{"event": "progress", "stage": "python", "message": "Resolving Python 3.9..."}'
-
-PYTHON_CMD=""
-
-# Check for python3.9 natively first (fastest path)
-if command -v python3.9 &>/dev/null; then
-    PYTHON_CMD="python3.9"
-    log "Found native python3.9: $(python3.9 --version)"
-else
-    log "python3.9 not found — attempting pyenv install..."
-    emit '{"event": "progress", "stage": "python", "message": "python3.9 not found — installing via pyenv..."}'
-
-    # Install pyenv if missing
-    if ! command -v pyenv &>/dev/null; then
-        log "Installing pyenv..."
-        curl -sSL https://pyenv.run | bash
-        # Add pyenv to PATH for this session
-        export PYENV_ROOT="$HOME/.pyenv"
-        export PATH="$PYENV_ROOT/bin:$PATH"
-        eval "$(pyenv init -)"
-    else
-        export PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
-        export PATH="$PYENV_ROOT/bin:$PATH"
-        eval "$(pyenv init -)"
-    fi
-
-    # Install Python 3.9.x via pyenv
-    if ! pyenv versions --bare | grep -q "^3\.9"; then
-        emit '{"event": "progress", "stage": "python", "message": "pyenv: compiling Python 3.9 (this may take a few minutes)..."}'
-        pyenv install 3.9.18
-    fi
-
-    PYTHON_CMD="$(pyenv root)/versions/$(pyenv versions --bare | grep "^3\.9" | tail -1)/bin/python3"
+# ─── Step 2: Find Python 3 ──────────────────────────────────────────────
+# ai-edge-litert supports Python 3.9–3.13. No version pinning needed.
+if ! command -v python3 &>/dev/null; then
+    emit '{"event": "error", "stage": "python", "message": "Python 3 not found. Install via your package manager."}'
+    exit 1
 fi
-
+PYTHON_CMD="python3"
 log "Using Python: $($PYTHON_CMD --version)"
 
 # ─── Step 3: Create isolated venv ────────────────────────────────────────────
@@ -146,13 +115,8 @@ fi
 
 "$VENV_DIR/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
 
-# ─── Step 4: Install PyCoral via pip (works with Python 3.9 wheels) ──────────
-emit '{"event": "progress", "stage": "build", "message": "Installing PyCoral 2.0 wheels from Google..."}'
-if ! "$VENV_DIR/bin/python" -m pip install --extra-index-url https://google-coral.github.io/py-repo/ pycoral~=2.0; then
-    emit '{"event": "error", "stage": "build", "message": "pip install pycoral failed"}'
-    exit 1
-fi
-
+# ─── Step 4: Install dependencies ──────────────────────────────────────────────
+emit '{"event": "progress", "stage": "build", "message": "Installing ai-edge-litert and dependencies..."}'
 if ! "$VENV_DIR/bin/python" -m pip install -r "$SKILL_DIR/requirements.txt"; then
     emit '{"event": "error", "stage": "build", "message": "pip install requirements failed"}'
     exit 1
